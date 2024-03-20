@@ -1,0 +1,1744 @@
+[FormDesignerId("8C458675-96A1-4849-8ED9-6C17284D5534")]
+[ClassId("EB280D88-35D1-48C1-A099-A4697EB39520")]
+[InterfaceId("9A8D2650-06A4-45D4-AD03-258308DFDA8A")]
+[EventInterfaceId("BE13A3AA-B715-4E3D-8694-D4B40FB2BAD2")]
+[COMControl]
+[Description("${ProjectName}.${ComponentName}")]
+Public Class ZucExplorerTree
+Option Explicit
+/*
+    ucExplorerTree v0.1
+    by Jon Johnson
+    
+    Hosts an instance of the NamespaceTreeControl.
+ 
+*/
+    #Const dbg_EnableEvents = True
+
+    Private Const dbg_UseTrace As Boolean = False
+    Private Const dbg_PrintToImmediate As Boolean = True 'This control has very extensive debug information, you may not want
+                                                          'to see that in your IDE.
+    Private Const dbg_IncludeDate As Boolean = True 'Prefix all Debug output with the date and time, [yyyy-mm-dd Hh:Mm:Ss]
+    Private Const dbg_IncludeName As Boolean = False 'Include Ambient.Name
+    Private Const dbg_dtFormat As String = "yyyy-mm-dd Hh:nn:Ss"
+    Private Const dbg_RaiseEvent As Boolean = True 'Raise DebugMessage event
+    Private Const dbg_MinLevel As Long = 0   'Only log to immediate/file messages >= this level
+    
+    Private mNST As NamespaceTreeControl
+    Private mhwnd As LongPtr
+    Private mCookie As Long
+    
+    Implements INameSpaceTreeControlEvents
+    Implements INameSpaceTreeControlDropHandler
+    Implements IServiceProvider
+    Implements IShellItemFilter
+    
+    Private mRoots() As IShellItem
+    Private nRt As Long
+    
+    Private Type tItem
+        sParse As String
+        sDisp As String
+        sPar As String
+        dwAtr As SFGAOF
+        nState As Long
+    End Type
+    Private tChecked() As tItem
+    Private nCheck As Long
+    
+    Private mCurStyle As NSTCSTYLE
+    Private mCurStyle2 As NSTCSTYLE2
+    
+    [EnumId("EC3BC43C-F99D-44DC-B49E-9494C00CB8E5")]
+    Public Enum UCET_CLICKLOCATION
+        'Maps to:
+        ' '  items up to 0x00ff reflect the TVHITTESTINFO flags
+        ' NSTCEHT_NOWHERE = &H0001
+        ' NSTCEHT_ONITEMICON = &H0002
+        ' NSTCEHT_ONITEMLABEL = &H0004
+        ' NSTCEHT_ONITEMINDENT = &H0008
+        ' NSTCEHT_ONITEMBUTTON = &H0010
+        ' NSTCEHT_ONITEMRIGHT = &H0020
+        ' NSTCEHT_ONITEMSTATEICON = &H0040
+        ' NSTCEHT_ONITEM = &H0046
+        ' '  items below don't reflect the TVHITTESTINFO flags
+        ' NSTCEHT_ONITEMTABBUTTON = &H1000
+        '  items up to 0x00ff reflect the TVHITTESTINFO flags
+        UCET_CLICKLOCATION_NOWHERE = &H0001
+        UCET_CLICKLOCATION_ONITEMICON = &H0002
+        UCET_CLICKLOCATION_ONITEMLABEL = &H0004
+        UCET_CLICKLOCATION_ONITEMINDENT = &H0008
+        UCET_CLICKLOCATION_ONITEMBUTTON = &H0010
+        UCET_CLICKLOCATION_ONITEMRIGHT = &H0020
+        UCET_CLICKLOCATION_ONITEMSTATEICON = &H0040
+        UCET_CLICKLOCATION_ONITEM = &H0046
+        '  items below don't reflect the TVHITTESTINFO flags
+        UCET_CLICKLOCATION_ONITEMTABBUTTON = &H1000
+    End Enum
+    [EnumId("2A614760-C212-4FDB-9631-14C05CF9C48B")]
+    Public Enum UCET_CLICKTYPE
+        ' NSTCECT_LBUTTON = &H0001
+        ' NSTCECT_MBUTTON = &H0002
+        ' NSTCECT_RBUTTON = &H0003
+        ' NSTCECT_BUTTON = &H0003
+        ' NSTCECT_DBLCLICK = &H0004
+        UCET_CLICKTYPE_LBUTTON = &H0001
+        UCET_CLICKTYPE_MBUTTON = &H0002
+        UCET_CLICKTYPE_RBUTTON = &H0003
+        UCET_CLICKTYPE_BUTTON = &H0003
+        UCET_CLICKTYPE_DBLCLICK = &H0004
+    End Enum
+    
+    Public Event DebugMessage(sMsg As String, nLevel As Integer)
+    'NamespaceTree Events
+    Public Event ItemClick(ByVal Button As UCET_CLICKTYPE, ByVal ClickLocation As UCET_CLICKLOCATION, ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long)
+    Public Event ItemDelete(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long)
+    Public Event ItemAdded(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long, ByVal bIsRoot As Boolean)
+    Public Event SelectionChanged(ByVal Count As Long, sParsingPath() As String, sName() As String, sParent() As String, dwAttrib() As Long)
+    Public Event OnBeforeExpand(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long, pCancel As Boolean)
+    Public Event OnAfterExpand(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long)
+    Public Event OnBeforeContextMenu(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long)
+    Public Event OnAfterContextMenu(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long)
+    Public Event OnBeginRename(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long)
+    Public Event OnFinishRename(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long)
+    Public Event KeyboardInput(ByVal uMsg As Long, ByVal wParam As LongPtr, ByVal lParam As LongPtr, phresult As Long)
+    Public Event QueryTooltip(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long, pstrTooltip As String)
+    Public Event TreeDragEnter(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long, ByVal nDragItems As Long, sDragParsingPaths() As String, sDragNames() As String, sDragParents() As String, dwDragAtrs() As Long, ByVal grfKeyState As Long, ByVal bOutsideSource As Boolean, pdwEffect As Long, pfBlockDrag As Boolean)
+    Public Event TreeDragOver(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long, ByVal nDragItems As Long, sDragParsingPaths() As String, sDragNames() As String, sDragParents() As String, dwDragAtrs() As Long, ByVal grfKeyState As Long, pdwEffect As Long)
+    Public Event TreeDragDrop(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long, ByVal nDragItems As Long, sDragParsingPaths() As String, sDragNames() As String, sDragParents() As String, dwDragAtrs() As Long, ByVal grfKeyState As Long, pdwEffect As Long)
+    Public Event TreeDragLeave(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long)
+    
+    
+    
+    Private mScaleX As Single, mScaleY As Single
+    
+    Private bIsWinVistaOrGreater As Boolean 'This control will not run on XP or lower
+    Private bIsWin7OrGreater As Boolean
+    Private bIsWin8OrGreater As Boolean
+    Private bIsWin10OrGreater As Boolean
+    Private bIsWow64 As Boolean
+    
+    Private Const sQuickAccess = "shell:::{679f85cb-0220-4080-b29b-5540cc05aab6}"
+    Private Const sLibRoot = "::{031E4825-7B94-4DC3-B131-E946B44C8DD5}"
+    
+    #Region "Properties"
+    'note: def styles:
+    ' Styles1: NSTCS_HASEXPANDOS Or NSTCS_FULLROWSELECT Or NSTCS_ROOTHASEXPANDO Or NSTCS_SHOWSELECTIONALWAYS Or 
+    ' NSTCS_NOINFOTIP Or NSTCS_EVENHEIGHT Or NSTCS_FADEINOUTEXPANDOS Or NSTCS_ALLOWJUNCTIONS Or 
+ 
+    ' Styles2: NSTCS2_DEFAULT Or NSTCS2_INTERRUPTNOTIFICATIONS Or NSTCS2_SHOWNULLSPACEMENU Or 
+    'NSTCS2_DISPLAYPADDING Or NSTCS2_DISPLAYPINNEDONLY Or NTSCS2_NOSINGLETONAUTOEXPAND Or NTSCS2_NEVERINSERTNONENUMERATED Or 
+    Private mInterrupt As Boolean
+    Private Const mDefInterrupt As Boolean = True
+    
+    Private mNullspace As Boolean
+    Private Const mDefNullspace As Boolean = True
+    
+    Private mPadding As Boolean
+    Private Const mDefPadding As Boolean = True
+    
+    Private mPinnedOnly As Boolean
+    Private Const mDefPinnedOnly As Boolean = True
+    
+    Private mNoSingExp As Boolean
+    Private Const mDefNoSingExp As Boolean = True
+    
+    Private mNeverNonEnum As Boolean
+    Private Const mDefNeverNonEnum As Boolean = True
+    
+    Private mCustomTooltips As Boolean
+    Private Const mDefCustomTooltips As Boolean = False
+    
+    Private mNoInfotips As Boolean
+    Private Const mDefInfotips As Boolean = True
+    
+    Private mNoDD As Boolean
+    Private Const mDefNoDD As Boolean = False
+    
+    Private mExpandos As Boolean
+    Private Const mDefExpandos As Boolean = True
+        
+    Private mFadeExpandos As Boolean
+    Private Const mDefFadeExpandos As Boolean = True
+    
+    Private mRootExpandos As Boolean
+    Private Const mDefRootExpandos As Boolean = True
+    
+    Private mLines As Boolean
+    Private Const mDefLines As Boolean = False
+    
+    Private mSingleClick As Boolean
+    Private Const mDefSingleClick As Boolean = False
+    
+    Private mFullRow As Boolean
+    Private Const mDefFullRow As Boolean = True
+    
+    Private mShowSelAlways As Boolean
+    Private Const mDefShowSelAlways As Boolean = True
+    
+    Private mJcts As Boolean
+    Private Const mDefJcts As Boolean = True
+    
+    Private mEvenCY As Boolean
+    Private Const mDefEvenCY As Boolean = True
+    
+    Private mSpring As Boolean
+    Private Const mDefSpring As Boolean = False
+    
+    Private mHScroll As Boolean
+    Private Const mDefHScroll As Boolean = False
+    
+    Private mNoReplaceOpen As Boolean
+    Private Const mDefNoReplaceOpen As Boolean = False
+    
+    Private mNoOrderStrm As Boolean
+    Private Const mDefNoOrderStrm As Boolean = False
+    
+    Private mRichTooltips As Boolean
+    Private Const mDefRichTooltips As Boolean = False
+    
+    Private mBorder As Boolean
+    Private Const mDefBorder As Boolean = False
+    
+    Private mNoRename As Boolean
+    Private Const mDefNoRename As Boolean = False
+    
+    Private mTabStop As Boolean
+    Private Const mDefTabStop As Boolean = False
+    
+    Private mFavMode As Boolean
+    Private Const mDefFavMode As Boolean = False
+    
+    Private mAutoHScroll As Boolean
+    Private Const mDefAutoHScroll As Boolean = False
+    
+    Private mEmptyText As Boolean
+    Private Const mDefEmptyText As Boolean = False
+    
+    Private mCheckBoxes As Boolean
+    Private Const mDefCheckBoxes As Boolean = False
+    Private mPartialCheckBoxes As Boolean
+    Private Const mDefPartialCheckBoxes As Boolean = False
+    Private mExcCheckBoxes As Boolean
+    Private Const mDefExcCheckBoxes As Boolean = False
+    Private mDimCheckBoxes As Boolean
+    Private Const mDefDimCheckBoxes As Boolean = False
+    Private mNoIndentCheckBoxes As Boolean
+    Private Const mDefNoIndentCheckBoxes As Boolean = False
+                    
+    Private mTabsBtn As Boolean
+    Private Const mDefTabsBtn As Boolean = False
+    Private mDelBtn As Boolean
+    Private Const mDefDelBtn As Boolean = False
+    Private mRefreshBtn As Boolean
+    Private Const mDefRefreshBtn As Boolean = False
+                                            
+    Private mFilterFolders As String = "*"
+    Private Const mDefFilterFolders = "*"
+    Private mFilterFiles As String = "*.*"
+    Private Const mDefFilterFiles = "*.*"
+    
+    Private mShowFiles As Boolean
+    Private Const mDefShowFiles As Boolean = False
+    
+    Private mShowHidden As Boolean
+    Private Const mDefShowHidden As Boolean = False
+    
+    Private mShowSuperHidden As Boolean
+    Private Const mDefShowSuperHidden As Boolean = False
+    
+    Private mCtxMenu As Boolean
+    Private Const mDefCtxMenu As Boolean = True
+    
+    Private mCustomRoots As Boolean
+    Private Const mDefCustomRoots As Boolean = False
+    
+    Private mQA As Boolean
+    Private Const mDefQA As Boolean = True
+    Private bQkAc As Boolean
+    
+    Private mLib As Boolean
+    Private Const mDefLib As Boolean = True
+    
+    Private mNet As Boolean
+    Private Const mDefNet As Boolean = True
+    
+    
+    
+    Private mPC As Boolean
+    Private Const mDefPC As Boolean = False
+    
+    
+    Private mCurEnum As SHCONTF
+    
+    Private Sub ReadProperties(PropBag As PropertyBag) Handles UserControl.ReadProperties
+        DebugAppend "Startup::ReadProperties"
+        mExpandos = PropBag.ReadProperty("HasExpandos", mDefExpandos)
+        mLines = PropBag.ReadProperty("HasLines", mDefLines)
+        mSingleClick = PropBag.ReadProperty("SingleClickExpand", mDefSingleClick)
+        mFullRow = PropBag.ReadProperty("FullRowSelect", mDefFullRow)
+        mSpring = PropBag.ReadProperty("SpringExpand", mDefSpring)
+        mHScroll = PropBag.ReadProperty("HorizontalScroll", mDefHScroll)
+        mRootExpandos = PropBag.ReadProperty("RootHasExpandos", mDefRootExpandos)
+        mShowSelAlways = PropBag.ReadProperty("ShowSelAlways", mDefShowSelAlways)
+        mNoInfotips = PropBag.ReadProperty("NoInfoTips", mDefInfotips)
+        mEvenCY = PropBag.ReadProperty("EvenHeight", mDefEvenCY)
+        mNoReplaceOpen = PropBag.ReadProperty("NoReplaceOpen", mDefNoReplaceOpen)
+        mNoDD = PropBag.ReadProperty("DisableDragDrop", mDefNoDD)
+        mNoOrderStrm = PropBag.ReadProperty("NoOrderStream", mDefNoOrderStrm)
+        mRichTooltips = PropBag.ReadProperty("RichTooltips", mDefRichTooltips)
+        mBorder = PropBag.ReadProperty("Border", mDefBorder)
+        mNoRename = PropBag.ReadProperty("NoRename", mDefNoRename)
+        mTabStop = PropBag.ReadProperty("TabStop", mDefTabStop)
+        mFavMode = PropBag.ReadProperty("FavoritesMode", mDefFavMode)
+        mAutoHScroll = PropBag.ReadProperty("AutoHScroll", mDefAutoHScroll)
+        mFadeExpandos = PropBag.ReadProperty("FadeInOutExpandos", mDefFadeExpandos)
+        mEmptyText = PropBag.ReadProperty("EmptyText", mDefEmptyText)
+        mCheckBoxes = PropBag.ReadProperty("Checkboxes", mDefCheckBoxes)
+        mPartialCheckBoxes = PropBag.ReadProperty("PartialCheckboxes", mDefPartialCheckBoxes)
+        mExcCheckBoxes = PropBag.ReadProperty("ExclusionCheckboxes", mDefExcCheckBoxes)
+        mDimCheckBoxes = PropBag.ReadProperty("DimmedCheckboxes", mDefDimCheckBoxes)
+        mNoIndentCheckBoxes = PropBag.ReadProperty("NoIndentCheckboxes", mDefNoIndentCheckBoxes)
+        mJcts = PropBag.ReadProperty("AllowJunctions", mDefJcts)
+        mTabsBtn = PropBag.ReadProperty("ShowTabsButton", mDefTabsBtn)
+        mDelBtn = PropBag.ReadProperty("ShowDeleteButton", mDefDelBtn)
+        mRefreshBtn = PropBag.ReadProperty("ShowRefreshButton", mDefRefreshBtn)
+        mInterrupt = PropBag.ReadProperty("InterruptNotifications", mDefInterrupt)
+        mNullspace = PropBag.ReadProperty("ShowNullSpaceMenu", mDefNullspace)
+        mPadding = PropBag.ReadProperty("DisplayPadding", mDefPadding)
+        mPinnedOnly = PropBag.ReadProperty("DisplayPinnedOnly", mDefPinnedOnly)
+        mNoSingExp = PropBag.ReadProperty("NoSingletonAutoexpand", mDefNoSingExp)
+        mNeverNonEnum = PropBag.ReadProperty("NeverInsertNonenumerated", mDefNeverNonEnum)
+        
+        mShowFiles = PropBag.ReadProperty("ShowFiles", mDefShowFiles)
+        mFilterFiles = PropBag.ReadProperty("FilesFilter", mDefFilterFiles)
+        ' mFilterFolders = PropBag.ReadProperty("FoldersFilter", mDefFilterFolders)
+        mShowHidden = PropBag.ReadProperty("ShowHidden", mDefShowHidden)
+        mShowSuperHidden = PropBag.ReadProperty("ShowSuperHidden", mDefShowSuperHidden)
+        mCtxMenu = PropBag.ReadProperty("AllowContextMenu", mDefCtxMenu)
+        mCustomTooltips = PropBag.ReadProperty("CustomTooltips", mDefCustomTooltips)
+        mCustomRoots = PropBag.ReadProperty("CustomRoots", mDefCustomRoots)
+        mQA = PropBag.ReadProperty("RootsIncludeQuickAccess", mDefQA)
+        mLib = PropBag.ReadProperty("RootsIncludeLibraries", mDefLib)
+        mNet = PropBag.ReadProperty("RootsIncludeNetwork", mDefNet)
+        mPC = PropBag.ReadProperty("ComputerAsRoot", mDefPC)
+    End Sub
+    
+    Private Sub WriteProperties(PropBag As PropertyBag) Handles UserControl.WriteProperties
+        PropBag.WriteProperty("HasExpandos", mExpandos, mDefExpandos)
+        PropBag.WriteProperty("HasLines", mLines, mDefLines)
+        PropBag.WriteProperty("SingleClickExpand", mSingleClick, mDefSingleClick)
+        PropBag.WriteProperty("FullRowSelect", mFullRow, mDefFullRow)
+        PropBag.WriteProperty("SpringExpand", mSpring, mDefSpring)
+        PropBag.WriteProperty("HorizontalScroll", mHScroll, mDefHScroll)
+        PropBag.WriteProperty("RootHasExpandos", mRootExpandos, mDefRootExpandos)
+        PropBag.WriteProperty("ShowSelAlways", mShowSelAlways, mDefShowSelAlways)
+        PropBag.WriteProperty("NoInfoTips", mNoInfotips, mDefInfotips)
+        PropBag.WriteProperty("EvenHeight", mEvenCY, mDefEvenCY)
+        PropBag.WriteProperty("NoReplaceOpen", mNoReplaceOpen, mDefNoReplaceOpen)
+        PropBag.WriteProperty("DisableDragDrop", mNoDD, mDefNoDD)
+        PropBag.WriteProperty("NoOrderStream", mNoOrderStrm, mDefNoOrderStrm)
+        PropBag.WriteProperty("RichTooltips", mRichTooltips, mDefRichTooltips)
+        PropBag.WriteProperty("Border", mBorder, mDefBorder)
+        PropBag.WriteProperty("NoRename", mNoRename, mDefNoRename)
+        PropBag.WriteProperty("TabStop", mTabStop, mDefTabStop)
+        PropBag.WriteProperty("FavoritesMode", mFavMode, mDefFavMode)
+        PropBag.WriteProperty("AutoHScroll", mAutoHScroll, mDefAutoHScroll)
+        PropBag.WriteProperty("FadeInOutExpandos", mFadeExpandos, mDefFadeExpandos)
+        PropBag.WriteProperty("EmptyText", mEmptyText, mDefEmptyText)
+        PropBag.WriteProperty("Checkboxes", mCheckBoxes, mDefCheckBoxes)
+        PropBag.WriteProperty("PartialCheckboxes", mPartialCheckBoxes, mDefPartialCheckBoxes)
+        PropBag.WriteProperty("ExclusionCheckboxes", mExcCheckBoxes, mDefExcCheckBoxes)
+        PropBag.WriteProperty("DimmedCheckboxes", mDimCheckBoxes, mDefDimCheckBoxes)
+        PropBag.WriteProperty("NoIndentCheckboxes", mNoIndentCheckBoxes, mDefNoIndentCheckBoxes)
+        PropBag.WriteProperty("AllowJunctions", mJcts, mDefJcts)
+        PropBag.WriteProperty("ShowTabsButton", mTabsBtn, mDefTabsBtn)
+        PropBag.WriteProperty("ShowDeleteButton", mDelBtn, mDefDelBtn)
+        PropBag.WriteProperty("ShowRefreshButton", mRefreshBtn, mDefRefreshBtn)
+        PropBag.WriteProperty("InterruptNotifications", mInterrupt, mDefInterrupt)
+        PropBag.WriteProperty("ShowNullSpaceMenu", mNullspace, mDefNullspace)
+        PropBag.WriteProperty("DisplayPadding", mPadding, mDefPadding)
+        PropBag.WriteProperty("DisplayPinnedOnly", mPinnedOnly, mDefPinnedOnly)
+        PropBag.WriteProperty("NoSingletonAutoexpand", mNoSingExp, mDefNoSingExp)
+        PropBag.WriteProperty("NeverInsertNonenumerated", mNeverNonEnum, mDefNeverNonEnum)
+        
+        PropBag.WriteProperty("ShowFiles", mShowFiles, mDefShowFiles)
+        PropBag.WriteProperty("FilesFilter", mFilterFolders, mDefFilterFiles)
+        ' PropBag.WriteProperty("FoldersFilter", mFilterFolders, mDefFilterFolders)
+        PropBag.WriteProperty("ShowHidden", mShowHidden, mDefShowHidden)
+        PropBag.WriteProperty("ShowSuperHidden", mShowSuperHidden, mDefShowSuperHidden)
+        PropBag.WriteProperty("AllowContextMenu", mCtxMenu, mDefCtxMenu)
+        PropBag.WriteProperty("CustomTooltips", mCustomTooltips, mDefCustomTooltips)
+        PropBag.WriteProperty("CustomRoots", mCustomRoots, mDefCustomRoots)
+        PropBag.WriteProperty("RootsIncludeQuickAccess", mQA, mDefQA)
+        PropBag.WriteProperty("RootsIncludeLibraries", mLib, mDefLib)
+        PropBag.WriteProperty("RootsIncludeNetwork", mNet, mDefNet)
+        PropBag.WriteProperty("ComputerAsRoot", mPC, mDefPC)
+    End Sub
+    Private Sub InitProperties() Handles UserControl.InitProperties
+        DebugAppend "Startup::InitProperties"
+        mExpandos = mDefExpandos
+        mLines = mDefLines
+        mSingleClick = mDefSingleClick
+        mFullRow = mDefFullRow
+        mSpring = mDefSpring
+        mHScroll = mDefHScroll
+        mRootExpandos = mDefRootExpandos
+        
+        mNoRename = mDefNoRename
+        mBorder = mDefBorder
+        mRichTooltips = mDefRichTooltips
+        mNoOrderStrm = mDefNoOrderStrm
+        mNoDD = mDefNoDD
+        mNoReplaceOpen = mDefNoReplaceOpen
+        mEvenCY = mDefEvenCY
+        mNoInfotips = mDefInfotips
+        mShowSelAlways = mDefShowSelAlways
+        
+        mJcts = mDefJcts
+        mNoIndentCheckBoxes = mDefNoIndentCheckBoxes
+        mDimCheckBoxes = mDefDimCheckBoxes
+        mExcCheckBoxes = mDefExcCheckBoxes
+        mPartialCheckBoxes = mDefPartialCheckBoxes
+        mCheckBoxes = mDefCheckBoxes
+        mEmptyText = mDefEmptyText
+        mFadeExpandos = mDefFadeExpandos
+        mAutoHScroll = mDefAutoHScroll
+        mFavMode = mDefFavMode
+        mTabStop = mDefTabStop
+        
+        mNeverNonEnum = mDefNeverNonEnum
+        mNoSingExp = mDefNoSingExp
+        mPinnedOnly = mDefPinnedOnly
+        mPadding = mDefPadding
+        mNullspace = mDefNullspace
+        mInterrupt = mDefInterrupt
+        mRefreshBtn = mDefRefreshBtn
+        mDelBtn = mDefDelBtn
+        mTabsBtn = mDefTabsBtn
+        
+        mCustomRoots = mDefCustomRoots
+        mCustomTooltips = mDefCustomTooltips
+        mCtxMenu = mDefCtxMenu
+        mShowSuperHidden = mDefShowSuperHidden
+        mShowHidden = mDefShowHidden
+        mFilterFolders = mDefFilterFolders
+        mFilterFiles = mDefFilterFiles
+        mShowFiles = mDefShowFiles
+        mQA = mDefQA
+        mPC = mDefPC
+        mNet = mDefNet
+        mLib = mDefLib
+    End Sub
+    
+    Public Property Get ShowFiles() As Boolean: ShowFiles = mShowFiles: End Property
+    [Description("Sets whether the item tree includes files.")]
+    Public Property Let ShowFiles(ByVal value As Boolean)
+        If value <> mShowFiles Then
+            mShowFiles = value
+            SetCurEnum()
+        End If
+    End Property
+    Public Property Get ShowHidden() As Boolean: ShowHidden = mShowHidden: End Property
+    [Description("Sets whether the item tree includes hidden items.")]
+    Public Property Let ShowHidden(ByVal value As Boolean)
+        If value <> mShowHidden Then
+            mShowHidden = value
+            SetCurEnum()
+        End If
+    End Property
+    Public Property Get ShowSuperHidden() As Boolean: ShowSuperHidden = mShowSuperHidden: End Property
+    [Description("Sets whether the item tree includes 'superhidden' items (protected operating system files; with attributes Hidden+System).")]
+    Public Property Let ShowSuperHidden(ByVal value As Boolean)
+        If value <> mShowSuperHidden Then
+            mShowSuperHidden = value
+            SetCurEnum()
+        End If
+    End Property
+    Public Property Get FilesFilter() As String: FilesFilter = mFilterFiles: End Property
+    [Description("The name filter applied to files, if included by the ShowFiles property. *.* or blank shows all files.")]
+    Public Property Let FilesFilter(ByVal value As String)
+        If value <> mFilterFiles Then
+            mFilterFiles = value
+        End If
+    End Property
+    ' Public Property Get FoldersFilter() As String: FoldersFilter = mFilterFolders: End Property
+    ' [Description("The name filter applied to folders. * or blank shows all folders.")]
+    ' Public Property Let FoldersFilter(ByVal value As String)
+    '     If value <> mFilterFolders Then
+    '         mFilterFolders = value
+    '     End If
+    ' End Property
+    Public Property Get CustomRoots() As Boolean: CustomRoots = mCustomRoots: End Property
+    [Description("Do not automatically insert the desktop or root items. Overrides PinnedOnly.")]
+    Public Property Let CustomRoots(ByVal value As Boolean)
+        If value <> mCustomRoots Then
+            mCustomRoots = value
+        End If
+    End Property
+    Public Property Get ComputerAsRoot() As Boolean: ComputerAsRoot = mPC: End Property
+    [Description("Use the ThisPC folder instead of the Desktop for the default root.")]
+    Public Property Let ComputerAsRoot(ByVal value As Boolean)
+        If value <> mPC Then
+            mPC = value
+        End If
+    End Property
+    Public Property Get RootsIncludeQuickAccess() As Boolean: RootsIncludeQuickAccess = mQA: End Property
+    [Description("Include QuickAccess items at the top of the tree, or Favorites prior to Windows 10. Not applicable when CustomRoots is True.")]
+    Public Property Let RootsIncludeQuickAccess(ByVal value As Boolean)
+        If value <> mQA Then
+            mQA = value
+        End If
+    End Property
+    Public Property Get RootsIncludeLibraries() As Boolean: RootsIncludeLibraries = mLib: End Property
+    [Description("Include the Libraries folder after the primary root. Not applicable when CustomRoots is True.")]
+    Public Property Let RootsIncludeLibraries(ByVal value As Boolean)
+        If value <> mLib Then
+            mLib = value
+        End If
+    End Property
+    Public Property Get RootsIncludeNetwork() As Boolean: RootsIncludeNetwork = mNet: End Property
+    [Description("Include the Network folder at the bottom of the tree. Not applicable when CustomRoots is True.")]
+    Public Property Let RootsIncludeNetwork(ByVal value As Boolean)
+        If value <> mNet Then
+            mNet = value
+        End If
+    End Property
+    Public Property Get AllowContextMenu() As Boolean: AllowContextMenu = mCtxMenu: End Property
+    [Description("Set whether the context menu is shown when an item is right-clicked.")]
+    Public Property Let AllowContextMenu(ByVal value As Boolean)
+        If value <> mCtxMenu Then
+            mCtxMenu = value
+        End If
+    End Property
+    
+    Public Property Get HasExpandos() As Boolean: HasExpandos = mExpandos: End Property
+    [Description("Sets whether the control has expando buttons.")]
+    Public Property Let HasExpandos(ByVal value As Boolean)
+        If value <> mExpandos Then
+            mExpandos = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_HASEXPANDOS, mExpandos
+            End If
+        End If
+    End Property
+    Public Property Get HasLines() As Boolean: HasLines = mLines: End Property
+    [Description("Sets whether the control has lines connecting items.")]
+    Public Property Let HasLines(ByVal value As Boolean)
+        If value <> mLines Then
+            mLines = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_HASLINES, mLines
+            End If
+        End If
+    End Property
+    Public Property Get SingleClickExpand() As Boolean: SingleClickExpand = mSingleClick: End Property
+    [Description("Sets whether a folder will expand to show subitems with a single click.")]
+    Public Property Let SingleClickExpand(ByVal value As Boolean)
+        If value <> mSingleClick Then
+            mSingleClick = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_SINGLECLICKEXPAND, mSingleClick
+            End If
+        End If
+    End Property
+    Public Property Get FullRowSelect() As Boolean: FullRowSelect = mFullRow: End Property
+    [Description("Sets whether the entire line shows the selection highlite (as opposed to only the item label and icon).")]
+    Public Property Let FullRowSelect(ByVal value As Boolean)
+        If value <> mFullRow Then
+            mFullRow = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_FULLROWSELECT, mFullRow
+            End If
+        End If
+    End Property
+    Public Property Get SpringExpand() As Boolean: SpringExpand = mSpring: End Property
+    [Description("Sets when one item is selected and expanded and you select a second item, whether the first selection automatically collapses.")]
+    Public Property Let SpringExpand(ByVal value As Boolean)
+        If value <> mSpring Then
+            mSpring = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_SPRINGEXPAND, mSpring
+            End If
+        End If
+    End Property
+    Public Property Get HorizontalScroll() As Boolean: HorizontalScroll = mHScroll: End Property
+    [Description("Sets the presence of a horizontal scrollbar at the bottom of the tree.")]
+    Public Property Let HorizontalScroll(ByVal value As Boolean)
+        If value <> mHScroll Then
+            mHScroll = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_HORIZONTALSCROLL, mHScroll
+            End If
+        End If
+    End Property
+    Public Property Get RootHasExpandos() As Boolean: RootHasExpandos = mRootExpandos: End Property
+    [Description("Sets whether root items have an expando button.")]
+    Public Property Let RootHasExpandos(ByVal value As Boolean)
+        If value <> mRootExpandos Then
+            mRootExpandos = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_ROOTHASEXPANDO, mRootExpandos
+            End If
+        End If
+    End Property
+    Public Property Get ShowSelAlways() As Boolean: ShowSelAlways = mShowSelAlways: End Property
+    [Description("Sets whether the selection highlite is visible when the control does not have focus.")]
+    Public Property Let ShowSelAlways(ByVal value As Boolean)
+        If value <> mShowSelAlways Then
+            mShowSelAlways = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_SHOWSELECTIONALWAYS, mShowSelAlways
+            End If
+        End If
+    End Property
+    Public Property Get NoInfoTips() As Boolean: NoInfoTips = mNoInfotips: End Property
+    [Description("Do not display infotips when the mouse cursor is over an item.")]
+    Public Property Let NoInfoTips(ByVal value As Boolean)
+        If value <> mNoInfotips Then
+            mNoInfotips = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_NOINFOTIP, mNoInfotips
+            End If
+        End If
+    End Property
+    Public Property Get EvenHeight() As Boolean: EvenHeight = mEvenCY: End Property
+    [Description("Do not display infotips when the mouse cursor is over an item.")]
+    Public Property Let EvenHeight(ByVal value As Boolean)
+        If value <> mEvenCY Then
+            mEvenCY = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_EVENHEIGHT, mEvenCY
+            End If
+        End If
+    End Property
+    Public Property Get NoReplaceOpen() As Boolean: NoReplaceOpen = mNoReplaceOpen: End Property
+    [Description("Do not replace the Open command in the shortcut menu with a user-defined function.")]
+    Public Property Let NoReplaceOpen(ByVal value As Boolean)
+        If value <> mNoReplaceOpen Then
+            mNoReplaceOpen = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_NOREPLACEOPEN, mNoReplaceOpen
+            End If
+        End If
+    End Property
+    Public Property Get DisableDragDrop() As Boolean: DisableDragDrop = mNoDD: End Property
+    [Description("Disables drag/drop of tree items.")]
+    Public Property Let DisableDragDrop(ByVal value As Boolean)
+        If value <> mNoDD Then
+            mNoDD = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_DISABLEDRAGDROP, mNoDD
+            End If
+        End If
+    End Property
+    Public Property Get NoOrderStream() As Boolean: NoOrderStream = mNoOrderStrm: End Property
+    [Description("Do not persist reordering changes. Used with FavoritesMode. If favorites mode is not specified, this flag has no effect.")]
+    Public Property Let NoOrderStream(ByVal value As Boolean)
+        If value <> mNoOrderStrm Then
+            mNoOrderStrm = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_NOORDERSTREAM, mNoOrderStrm
+            End If
+        End If
+    End Property
+    Public Property Get RichTooltips() As Boolean: RichTooltips = mRichTooltips: End Property
+    [Description("Display the item's icon in addition to the item's text in the tooltip. No effect unless combined with NoInfoTips and/or FavoritesMode.")]
+    Public Property Let RichTooltips(ByVal value As Boolean)
+        If value <> mRichTooltips Then
+            mRichTooltips = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_RICHTOOLTIP, mRichTooltips
+            End If
+        End If
+    End Property
+    Public Property Get Border() As Boolean: Border = mBorder: End Property
+    [Description("Show a border around the control. Can't be changed during runtime.")]
+    Public Property Let Border(ByVal value As Boolean)
+        If value <> mBorder Then
+            mBorder = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_BORDER, mBorder
+            End If
+        End If
+    End Property
+    Public Property Get NoRename() As Boolean: NoRename = mNoRename: End Property
+    [Description("Disable in place renaming of items.")]
+    Public Property Let NoRename(ByVal value As Boolean)
+        If value <> mNoRename Then
+            mNoRename = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_NOEDITLABELS, mNoRename
+            End If
+        End If
+    End Property
+    Public Property Get TabStop() As Boolean: TabStop = mTabStop: End Property
+    [Description("Affects tab button behavior.")]
+    Public Property Let TabStop(ByVal value As Boolean)
+        If value <> mTabStop Then
+            mTabStop = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_TABSTOP, mTabStop
+            End If
+        End If
+    End Property
+    Public Property Get FavoritesMode() As Boolean: FavoritesMode = mFavMode: End Property
+    [Description("Sets whether the control has the appearance of the favorites band in Windows XP.")]
+    Public Property Let FavoritesMode(ByVal value As Boolean)
+        If value <> mFavMode Then
+            mFavMode = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_FAVORITESMODE, mFavMode
+            End If
+        End If
+    End Property
+    Public Property Get AutoHScroll() As Boolean: AutoHScroll = mAutoHScroll: End Property
+    [Description("Automatically scroll horizontally to keep the selected item in view.")]
+    Public Property Let AutoHScroll(ByVal value As Boolean)
+        If value <> mAutoHScroll Then
+            mAutoHScroll = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_AUTOHSCROLL, mAutoHScroll
+            End If
+        End If
+    End Property
+    Public Property Get FadeInOutExpandos() As Boolean: FadeInOutExpandos = mFadeExpandos: End Property
+    [Description("Fade out expando buttons when the mouse is not near them.")]
+    Public Property Let FadeInOutExpandos(ByVal value As Boolean)
+        If value <> mFadeExpandos Then
+            mFadeExpandos = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_FADEINOUTEXPANDOS, mFadeExpandos
+            End If
+        End If
+    End Property
+    Public Property Get EmptyText() As Boolean: EmptyText = mEmptyText: End Property
+    [Description("Show the text 'empty' in an expanded item with no children.")]
+    Public Property Let EmptyText(ByVal value As Boolean)
+        If value <> mEmptyText Then
+            mEmptyText = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_EMPTYTEXT, mEmptyText
+            End If
+        End If
+    End Property
+    Public Property Get Checkboxes() As Boolean: Checkboxes = mCheckBoxes: End Property
+    [Description("Show checkboxes next to each item.")]
+    Public Property Let Checkboxes(ByVal value As Boolean)
+        If value <> mCheckBoxes Then
+            mCheckBoxes = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_CHECKBOXES, mCheckBoxes
+            End If
+        End If
+    End Property
+    Public Property Get PartialCheckboxes() As Boolean: PartialCheckboxes = mPartialCheckBoxes: End Property
+    [Description("Enables a checkbox state with a square to indicate partial select. Must be combined with Checkboxes.")]
+    Public Property Let PartialCheckboxes(ByVal value As Boolean)
+        If value <> mPartialCheckBoxes Then
+            mPartialCheckBoxes = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_PARTIALCHECKBOXES, mPartialCheckBoxes
+            End If
+        End If
+    End Property
+    Public Property Get ExclusionCheckboxes() As Boolean: ExclusionCheckboxes = mExcCheckBoxes: End Property
+    [Description("Enables a checkbox state that contains a red X, which indicates that the item is excluded from the current selection. Must be combined with Checkboxes.")]
+    Public Property Let ExclusionCheckboxes(ByVal value As Boolean)
+        If value <> mExcCheckBoxes Then
+            mExcCheckBoxes = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_EXCLUSIONCHECKBOXES, mExcCheckBoxes
+            End If
+        End If
+    End Property
+    Public Property Get DimmedCheckboxes() As Boolean: DimmedCheckboxes = mDimCheckBoxes: End Property
+    [Description("Enables a checkbox state with a dimmed check mark, that indicates that a node is selected because its parent is selected. Must be combined with Checkboxes.")]
+    Public Property Let DimmedCheckboxes(ByVal value As Boolean)
+        If value <> mDimCheckBoxes Then
+            mDimCheckBoxes = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_DIMMEDCHECKBOXES, mDimCheckBoxes
+            End If
+        End If
+    End Property
+    Public Property Get NoIndentCheckboxes() As Boolean: NoIndentCheckboxes = mNoIndentCheckBoxes: End Property
+    [Description("Show checkboxes all the way on the left instead of next to the item.")]
+    Public Property Let NoIndentCheckboxes(ByVal value As Boolean)
+        If value <> mNoIndentCheckBoxes Then
+            mNoIndentCheckBoxes = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_NOINDENTCHECKS, mNoIndentCheckBoxes
+            End If
+        End If
+    End Property
+    Public Property Get AllowJunctions() As Boolean: AllowJunctions = mJcts: End Property
+    [Description("Allow junctions. A junction point, or just junction, is a root of a namespace extension that is normally displayed by Windows Explorer as a folder in both tree and folder views.")]
+    Public Property Let AllowJunctions(ByVal value As Boolean)
+        If value <> mJcts Then
+            mJcts = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_ALLOWJUNCTIONS, mJcts
+            End If
+        End If
+    End Property
+    Public Property Get ShowTabsButton() As Boolean: ShowTabsButton = mTabsBtn: End Property
+    [Description("Displays an arrow on the right side of an item if the item is a folder. Handled by the ItemClick event with location UCET_CLICKLOCATION_ONITEMTABBUTTON. Cannot be combined with ShowDeleteButton or ShowRefreshButton.")]
+    Public Property Let ShowTabsButton(ByVal value As Boolean)
+        If value <> mTabsBtn Then
+            mTabsBtn = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_SHOWTABSBUTTON, mTabsBtn
+            End If
+        End If
+    End Property
+    Public Property Get ShowDeleteButton() As Boolean: ShowDeleteButton = mDelBtn: End Property
+    [Description("Displays a red X on the right side of an item. Handled by the ItemClick event with location UCET_CLICKLOCATION_ONITEMTABBUTTON. Cannot be combined with ShowTabsButton or ShowRefreshButton.")]
+    Public Property Let ShowDeleteButton(ByVal value As Boolean)
+        If value <> mDelBtn Then
+            mDelBtn = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_SHOWDELETEBUTTON, mDelBtn
+            End If
+        End If
+    End Property
+    Public Property Get ShowRefreshButton() As Boolean: ShowRefreshButton = mRefreshBtn: End Property
+    [Description("Displays a refresh button on the right side of an item. Handled by the ItemClick event with location UCET_CLICKLOCATION_ONITEMTABBUTTON. Cannot be combined with ShowTabsButton or ShowDeleteButton.")]
+    Public Property Let ShowRefreshButton(ByVal value As Boolean)
+        If value <> mRefreshBtn Then
+            mRefreshBtn = value
+            If Ambient.UserMode Then
+                SetStyle NSTCS_SHOWREFRESHBUTTON, mRefreshBtn
+            End If
+        End If
+    End Property
+    Public Property Get InterruptNotifications() As Boolean: InterruptNotifications = mInterrupt: End Property
+    [Description("Displays interrupt notifications.")]
+    Public Property Let InterruptNotifications(ByVal value As Boolean)
+        If value <> mInterrupt Then
+            mInterrupt = value
+            If Ambient.UserMode Then
+                SetStyle2 NSTCS2_INTERRUPTNOTIFICATIONS, mInterrupt
+            End If
+        End If
+    End Property
+    Public Property Get ShowNullSpaceMenu() As Boolean: ShowNullSpaceMenu = mNullspace: End Property
+    [Description("Displays the context menu in the padding space.")]
+    Public Property Let ShowNullSpaceMenu(ByVal value As Boolean)
+        If value <> mNullspace Then
+            mNullspace = value
+            If Ambient.UserMode Then
+                SetStyle2 NSTCS2_SHOWNULLSPACEMENU, mNullspace
+            End If
+        End If
+    End Property
+    Public Property Get DisplayPadding() As Boolean: DisplayPadding = mPadding: End Property
+    [Description("Inserts spacing (padding) between top-level nodes.")]
+    Public Property Let DisplayPadding(ByVal value As Boolean)
+        If value <> mPadding Then
+            mPadding = value
+            If Ambient.UserMode Then
+                SetStyle2 NSTCS2_DISPLAYPADDING, mPadding
+            End If
+        End If
+    End Property
+    Public Property Get DisplayPinnedOnly() As Boolean: DisplayPinnedOnly = mPinnedOnly: End Property
+    [Description("Filters items based on the System.IsPinnedToNameSpaceTree value when INameSpaceTreeControlFolderCapabilities is implemented.")]
+    Public Property Let DisplayPinnedOnly(ByVal value As Boolean)
+        If value <> mPinnedOnly Then
+            mPinnedOnly = value
+            If Ambient.UserMode Then
+                SetStyle2 NSTCS2_DISPLAYPINNEDONLY, mPinnedOnly
+            End If
+        End If
+    End Property
+    Public Property Get NoSingletonAutoexpand() As Boolean: NoSingletonAutoexpand = mNoSingExp: End Property
+    [Description("NTSCS2_NOSINGLETONAUTOEXPAND")]
+    Public Property Let NoSingletonAutoexpand(ByVal value As Boolean)
+        If value <> mNoSingExp Then
+            mNoSingExp = value
+            If Ambient.UserMode Then
+                SetStyle2 NTSCS2_NOSINGLETONAUTOEXPAND, mNoSingExp
+            End If
+        End If
+    End Property
+    Public Property Get NeverInsertNonenumerated() As Boolean: NeverInsertNonenumerated = mNeverNonEnum: End Property
+    [Description("Do not insert nonenumerated (SFGAO_NONENUMERATED) items in the tree.")]
+    Public Property Let NeverInsertNonenumerated(ByVal value As Boolean)
+        If value <> mNeverNonEnum Then
+            mNeverNonEnum = value
+            If Ambient.UserMode Then
+                SetStyle2 NTSCS2_NEVERINSERTNONENUMERATED, mNeverNonEnum
+            End If
+        End If
+    End Property
+    
+
+    #End Region
+    
+    #Region "TreeEventHandlers"
+    Private Sub INameSpaceTreeControlEvents_OnItemClick(ByVal psi As IShellItem, ByVal nstceHitTest As NSTCEHITTEST, ByVal nstceClickType As NSTCECLICKTYPE) Implements INameSpaceTreeControlEvents.OnItemClick
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+        RaiseEvent ItemClick(nstceClickType, nstceHitTest, sPP, sDisp, sPar, lAtr)
+        Err.ReturnHResult = S_FALSE
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnAfterContextMenu(ByVal psi As IShellItem, ByVal pcmIn As IContextMenu, riid As UUID, ppv As LongPtr) Implements INameSpaceTreeControlEvents.OnAfterContextMenu
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+        RaiseEvent OnAfterContextMenu(sPP, sDisp, sPar, lAtr)
+        Err.ReturnHResult = E_NOTIMPL
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnAfterExpand(ByVal psi As IShellItem) Implements INameSpaceTreeControlEvents.OnAfterExpand
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+        RaiseEvent OnAfterExpand(sPP, sDisp, sPar, lAtr)
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnBeforeContextMenu(ByVal psi As IShellItem, riid As UUID, ppv As LongPtr) Implements INameSpaceTreeControlEvents.OnBeforeContextMenu
+        If mCtxMenu Then
+            Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+            GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+            RaiseEvent OnBeforeContextMenu(sPP, sDisp, sPar, lAtr)
+            Err.ReturnHResult = E_NOTIMPL
+        Else
+            Err.ReturnHResult = S_FALSE
+        End If
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnBeforeExpand(ByVal psi As IShellItem) Implements INameSpaceTreeControlEvents.OnBeforeExpand
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+        Dim cancel As Boolean
+        RaiseEvent OnBeforeExpand(sPP, sDisp, sPar, lAtr, cancel)
+        If cancel Then
+            Err.ReturnHResult = S_FALSE
+        End If
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnBeforeItemDelete(ByVal psi As IShellItem) Implements INameSpaceTreeControlEvents.OnBeforeItemDelete
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+        RaiseEvent ItemDelete(sPP, sDisp, sPar, lAtr)
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnBeforeStateImageChange(ByVal psi As IShellItem) Implements INameSpaceTreeControlEvents.OnBeforeStateImageChange
+        Err.ReturnHResult = S_FALSE 'UNDOCUMENTED!!! Checkboxes don't work automatically if this isn't set
+                                    'TODO: In the future, we can try automatically using other checkbox
+                                    '      states (Dimmed, etc) by manually advancing the state image
+                                    '      index ourselves with mNST.Get/SetItemCustomState.
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnBeginLabelEdit(ByVal psi As IShellItem) Implements INameSpaceTreeControlEvents.OnBeginLabelEdit
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+        RaiseEvent OnBeginRename(sPP, sDisp, sPar, lAtr)
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnEndLabelEdit(ByVal psi As IShellItem) Implements INameSpaceTreeControlEvents.OnEndLabelEdit
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+        RaiseEvent OnFinishRename(sPP, sDisp, sPar, lAtr)
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnGetDefaultIconIndex(ByVal psi As IShellItem, piDefaultIcon As Long, piOpenIcon As Long) Implements INameSpaceTreeControlEvents.OnGetDefaultIconIndex
+        Err.ReturnHResult = -1 'Use default icon
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnGetTooltip(ByVal psi As IShellItem, ByVal pszTip As LongPtr, ByVal cchTip As Long) Implements INameSpaceTreeControlEvents.OnGetTooltip
+        If mCustomTooltips Then
+			If pszTip Then
+				Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+				GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+				Dim sTip As String
+				RaiseEvent QueryTooltip(sPP, sDisp, sPar, lAtr, sTip)
+				If (sTip <> "") And (cchTip > 0) Then
+					If Len$(sTip) > (cchTip - 1) Then
+						sTip = Left$(sTip, (cchTip - 1))
+					End If
+					sTip = sTip & vbNullChar
+					CopyMemory ByVal pszTip, ByVal StrPtr(sTip), Len$(sTip) * 2
+					Exit Sub
+				End If
+			End If
+        End If
+        Err.ReturnHResult = E_NOTIMPL
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnItemAdded(ByVal psi As IShellItem, ByVal fIsRoot As BOOL) Implements INameSpaceTreeControlEvents.OnItemAdded
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+        RaiseEvent ItemAdded(sPP, sDisp, sPar, lAtr, fIsRoot <> CFALSE)
+        Err.ReturnHResult = E_NOTIMPL
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnItemDeleted(ByVal psi As IShellItem, ByVal fIsRoot As BOOL) Implements INameSpaceTreeControlEvents.OnItemDeleted
+        Err.ReturnHResult = E_NOTIMPL
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnItemStateChanged(ByVal psi As IShellItem, ByVal nstcisMask As NSTCITEMSTATE, ByVal nstcisState As NSTCITEMSTATE) Implements INameSpaceTreeControlEvents.OnItemStateChanged
+        
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnItemStateChanging(ByVal psi As IShellItem, ByVal nstcisMask As NSTCITEMSTATE, ByVal nstcisState As NSTCITEMSTATE) Implements INameSpaceTreeControlEvents.OnItemStateChanging
+        
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnPropertyItemCommit(ByVal psi As IShellItem) Implements INameSpaceTreeControlEvents.OnPropertyItemCommit
+        Err.ReturnHResult = S_FALSE
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnKeyboardInput(ByVal uMsg As Long, ByVal wParam As LongPtr, ByVal lParam As LongPtr) Implements INameSpaceTreeControlEvents.OnKeyboardInput
+        Dim hr As Long = S_FALSE
+        RaiseEvent KeyboardInput(uMsg, wParam, lParam, hr)
+        Err.ReturnHResult = hr
+    End Sub
+    
+    Private Sub INameSpaceTreeControlEvents_OnSelectionChanged(ByVal psiaSelection As IShellItemArray) Implements INameSpaceTreeControlEvents.OnSelectionChanged
+        Dim lCt As Long
+        Dim sPPs() As String, sDisps() As String, sPars() As String, lAtrs() As Long
+        GetItemStandardInfoArray(psiaSelection, lCt, sPPs, sDisps, sPars, lAtrs)
+        RaiseEvent SelectionChanged(lCt, sPPs, sDisps, sPars, lAtrs)
+    End Sub
+    
+    Private Sub INameSpaceTreeControlDropHandler_OnDragEnter(ByVal psiOver As IShellItem, ByVal psiaData As IShellItemArray, ByVal fOutsideSource As BOOL, ByVal grfKeyState As KeyStateMouse, pdwEffect As DROPEFFECTS) Implements INameSpaceTreeControlDropHandler.OnDragEnter
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psiOver, sPP, sDisp, sPar, lAtr)
+        Dim lCt As Long
+        Dim sPPs() As String, sDisps() As String, sPars() As String, lAtrs() As Long
+        GetItemStandardInfoArray(psiaData, lCt, sPPs, sDisps, sPars, lAtrs)
+        Dim bCn As Boolean
+        RaiseEvent TreeDragEnter(sPP, sDisp, sPar, lAtr, lCt, sPPs, sDisps, sPars, lAtrs, grfKeyState, (fOutsideSource <> CFALSE), pdwEffect, bCn)
+        If bCn Then Err.ReturnHResult = S_FALSE
+    End Sub
+    
+    Private Sub INameSpaceTreeControlDropHandler_OnDragLeave(ByVal psiOver As IShellItem) Implements INameSpaceTreeControlDropHandler.OnDragLeave
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psiOver, sPP, sDisp, sPar, lAtr)
+        RaiseEvent TreeDragLeave(sPP, sDisp, sPar, lAtr)
+    End Sub
+    
+    Private Sub INameSpaceTreeControlDropHandler_OnDragOver(ByVal psiOver As IShellItem, ByVal psiaData As IShellItemArray, ByVal grfKeyState As KeyStateMouse, pdwEffect As DROPEFFECTS) Implements INameSpaceTreeControlDropHandler.OnDragOver
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psiOver, sPP, sDisp, sPar, lAtr)
+        Dim lCt As Long
+        Dim sPPs() As String, sDisps() As String, sPars() As String, lAtrs() As Long
+        GetItemStandardInfoArray(psiaData, lCt, sPPs, sDisps, sPars, lAtrs)
+        Dim bCn As Boolean
+        RaiseEvent TreeDragOver(sPP, sDisp, sPar, lAtr, lCt, sPPs, sDisps, sPars, lAtrs, grfKeyState, pdwEffect)
+    End Sub
+    
+    Private Sub INameSpaceTreeControlDropHandler_OnDragPosition(ByVal psiOver As IShellItem, ByVal psiaData As IShellItemArray, ByVal iNewPosition As Long, ByVal iOldPosition As Long) Implements INameSpaceTreeControlDropHandler.OnDragPosition
+        
+    End Sub
+    
+    Private Sub INameSpaceTreeControlDropHandler_OnDrop(ByVal psiOver As IShellItem, ByVal psiaData As IShellItemArray, ByVal iPosition As Long, ByVal grfKeyState As KeyStateMouse, pdwEffect As DROPEFFECTS) Implements INameSpaceTreeControlDropHandler.OnDrop
+        Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+        GetItemStandardInfo(psiOver, sPP, sDisp, sPar, lAtr)
+        Dim lCt As Long
+        Dim sPPs() As String, sDisps() As String, sPars() As String, lAtrs() As Long
+        GetItemStandardInfoArray(psiaData, lCt, sPPs, sDisps, sPars, lAtrs)
+        Dim bCn As Boolean
+        RaiseEvent TreeDragDrop(sPP, sDisp, sPar, lAtr, lCt, sPPs, sDisps, sPars, lAtrs, grfKeyState, pdwEffect)
+    End Sub
+    
+    Private Sub INameSpaceTreeControlDropHandler_OnDropPosition(ByVal psiOver As IShellItem, ByVal psiaData As IShellItemArray, ByVal iNewPosition As Long, ByVal iOldPosition As Long) Implements INameSpaceTreeControlDropHandler.OnDropPosition
+        
+    End Sub
+    
+    Private Sub IShellItemFilter_IncludeItem(ByVal psi As IShellItem) Implements IShellItemFilter.IncludeItem
+        If mShowFiles Then
+            If (mFilterFiles = "") Or (mFilterFiles = "*.*") Or (mFilterFiles = "*") Then
+                Exit Sub 'Err.ReturnHResult = S_OK
+            Else
+                Dim lpName As LongPtr, sName As String
+                Dim dwAtr As Long
+
+                If (psi Is Nothing) = False Then
+                    psi.GetAttributes SFGAO_STREAM Or SFGAO_FOLDER, dwAtr
+                    If ((dwAtr And SFGAO_FOLDER) = 0) Then 'is in normal file system, is not a folder
+                        psi.GetDisplayName SIGDN_PARENTRELATIVEPARSING, lpName
+                        sName = LPWSTRtoStr(lpName)
+                ''        Debug.Print "IShellItemFilter_IncludeItem?" & sName & "|" & gSpec
+                        If PathMatchSpecW(StrPtr(sName), StrPtr(mFilterFiles)) Then
+                            Err.ReturnHResult = S_OK 'should show
+                        Else
+                            Err.ReturnHResult = S_FALSE
+                        End If
+                    End If
+                Else
+                    Debug.Print "IncludeItemVB.NoItem"
+                End If
+            End If
+        End If
+    End Sub
+    
+    Private Sub IShellItemFilter_GetEnumFlagsForItem(ByVal psi As IShellItem, pgrfFlags As SHCONTF) Implements IShellItemFilter.GetEnumFlagsForItem
+        If (mCurEnum And SHCONTF_NONFOLDERS) = SHCONTF_NONFOLDERS Then pgrfFlags = pgrfFlags Or SHCONTF_NONFOLDERS
+        If (mCurEnum And SHCONTF_INCLUDEHIDDEN) = SHCONTF_INCLUDEHIDDEN Then pgrfFlags = pgrfFlags Or SHCONTF_INCLUDEHIDDEN
+        If (mCurEnum And SHCONTF_INCLUDESUPERHIDDEN) = SHCONTF_INCLUDESUPERHIDDEN Then pgrfFlags = pgrfFlags Or SHCONTF_INCLUDESUPERHIDDEN
+    End Sub
+    #End Region
+    
+    #Region "ControlEventHandlers"
+    'Property events handled in properties region.
+    Private Sub OnInitialize() Handles UserControl.Initialize
+        DebugAppend "Startup::ControlInitialize"
+        Dim hDC As LongPtr
+        hDC = GetDC(0&)
+        mScaleX = GetDeviceCaps(hDC, LOGPIXELSX) / 96
+        DebugAppend "dpix=" & GetDeviceCaps(hDC, LOGPIXELSX) / 96, 1111
+        mScaleY = GetDeviceCaps(hDC, LOGPIXELSY) / 96
+        ReleaseDC 0&, hDC
+        nRt = -1
+        ReadWindowsVersion()
+    End Sub
+    Private Sub OnShow() Handles UserControl.Show
+        DebugAppend "Startup::ControlShow"
+        If mNST Is Nothing Then pvInitNST
+        If Ambient.UserMode Then
+            
+        End If
+    End Sub
+    Private Sub OnTerminate() Handles UserControl.Terminate
+        If mNST IsNot Nothing Then
+            If mCookie Then mNST.TreeUnadvise(mCookie)
+            mNST.RemoveAllRoots()
+        End If
+        If mhwnd Then DestroyWindow(mhwnd)
+        If nRt >= 0 Then
+            Dim i As Long
+            For i = 0 To nRt
+                Set mRoots(i) = Nothing
+            Next
+        End If
+        IUnknown_SetSite(mNST, Nothing)
+    End Sub
+    
+    Private Sub OnResize() Handles UserControl.Resize
+        If mNST IsNot Nothing Then
+            If mhwnd Then
+                Dim prc As RECT
+                GetClientRect UserControl.hWnd, prc
+                SetWindowPos mhwnd, 0, 0, 0, prc.Right, prc.Bottom, SWP_NOMOVE Or SWP_NOZORDER
+            End If
+        End If
+    End Sub
+    
+    #End Region
+    
+    Private Sub pvInitNST()
+        DebugAppend "Startup::Init->Entry"
+        Set mNST = New NamespaceTreeControl
+        Dim prc As RECT
+        GetClientRect UserControl.hWnd, prc
+        SetCurStyles
+        SetCurEnum
+        mNST.Initialize(UserControl.hWnd, prc, mCurStyle)
+        mNST.SetControlStyle2(NSTCS2_INTERRUPTNOTIFICATIONS Or NSTCS2_SHOWNULLSPACEMENU Or NSTCS2_DISPLAYPADDING Or NSTCS2_DISPLAYPINNEDONLY _
+                                Or NTSCS2_NOSINGLETONAUTOEXPAND Or NTSCS2_NEVERINSERTNONENUMERATED, mCurStyle2)
+        mNST.SetTheme("explorer")
+        IUnknown_GetWindow(mNST, mhwnd)
+        If mhwnd Then
+			DebugAppend "Startup::Init->Found hwnd"
+        Else
+            DebugAppend "Error: Couldn't get tree hwnd."
+        End If
+        If Ambient.UserMode Then
+            InsertDefaultRoots
+            #If dbg_EnableEvents Then
+            mNST.TreeAdvise(Me, mCookie)
+            #End If
+            Dim pSvc As IServiceProvider
+            Set pSvc = Me
+            IUnknown_SetSite(mNST, pSvc)
+        End If
+    End Sub
+    
+    Private Sub InsertDefaultRoots()
+        If mCustomRoots = False Then
+            If mQA Then
+                nRt += 1
+                ReDim Preserve mRoots(nRt)
+                If bIsWin10OrGreater Then
+                    SHCreateItemFromParsingName StrPtr(sQuickAccess), Nothing, IID_IShellItem, mRoots(nRt)
+                    bQkAc = True
+                    DebugAppend "Startup::Init->Add QuickAccess"
+                Else
+                    SHGetKnownFolderItem FOLDERID_Favorites, KF_FLAG_DEFAULT, 0&, IID_IShellItem, mRoots(nRt)
+                    DebugAppend "Startup::Init->Add Favorites"
+                End If
+                If mRoots(nRt) IsNot Nothing Then
+                    mNST.AppendRoot(mRoots(nRt), mCurEnum, NSTCRS_EXPANDED, Me)
+                End If
+            End If
+            Dim siDesk As IShellItem
+            If mPC Then
+                SHGetKnownFolderItem FOLDERID_ComputerFolder, KF_FLAG_DEFAULT, 0&, IID_IShellItem, siDesk
+                DebugAppend "Startup::Init->Add Computer"
+            Else
+                SHGetKnownFolderItem FOLDERID_Desktop, KF_FLAG_DEFAULT, 0&, IID_IShellItem, siDesk
+                DebugAppend "Startup::Init->Add Desktop"
+            End If
+            nRt += 1
+            ReDim Preserve mRoots(nRt)
+            mNST.AppendRoot(siDesk, mCurEnum, NSTCRS_EXPANDED, Me)
+            If mLib Then
+                Dim siLib As IShellItem
+                SHCreateItemFromParsingName StrPtr(sLibRoot), Nothing, IID_IShellItem, mRoots(nRt)
+                If mRoots(nRt) IsNot Nothing Then
+                    DebugAppend "Startup::Init->Add Libraries"
+                    mNST.AppendRoot(mRoots(nRt), mCurEnum, NSTCRS_EXPANDED, Me)
+                Else
+                    DebugAppend "Startup::Init->Error: Couldn't resolve Libraries"
+                End If
+            End If
+            If mNet Then
+                nRt += 1
+                ReDim Preserve mRoots(nRt)
+                Dim siNet As IShellItem
+                SHGetKnownFolderItem FOLDERID_NetworkFolder, KF_FLAG_DEFAULT, 0&, IID_IShellItem, mRoots(nRt)
+                DebugAppend "Startup::Init->Add Network"
+                If mRoots(nRt) IsNot Nothing Then
+                    mNST.AppendRoot(mRoots(nRt), mCurEnum, NSTCRS_VISIBLE, Me)
+                End If
+            End If
+        End If
+    End Sub
+    #Region "PublicMethods"
+    
+    [Description("Adds a custom root node to the tree. If pidlFull is specified, sParsingPath is ignored. If nPosition is not specified or negative, the root is appended after existing items.")]
+    Public Function AddRoot(ByVal sParsingPath As String, Optional ByVal pidlFull As LongPtr, Optional ByVal nPosition As Long = -1) As Long
+        If mNST IsNot Nothing Then
+            Dim siRoot As IShellItem
+            If pidlFull Then
+                SHCreateItemFromIDList(pidlFull, IID_IShellItem, siRoot)
+            Else
+                SHCreateItemFromParsingName(sParsingPath, Nothing, IID_IShellItem, siRoot)
+            End If
+            If siRoot IsNot Nothing Then
+                nRt += 1
+                ReDim Preserve mRoots(nRt)
+                Set mRoots(nRt) = siRoot
+                If nPosition <= -1 Then
+                    mNST.AppendRoot(mRoots(nRt), mCurEnum, NSTCRS_EXPANDED, Me)
+                Else
+                    mNST.InsertRoot(nPosition, mRoots(nRt), mCurEnum, NSTCRS_EXPANDED, Me)
+                End If
+                If mCookie = 0 Then 'We haven't set the event handler yet
+                    #If dbg_EnableEvents Then
+                    mNST.TreeAdvise(Me, mCookie)
+                    #End If
+                End If
+                Return nRt
+            End If
+        End If
+        Return -1
+    End Function
+    [Description("Removes a root node from the tree. If pidlFull is specified, sParsingPath is ignored.")]
+    Public Sub RemoveRoot(iIndex As Long)
+        If mNST IsNot Nothing Then
+            If nRt >= 0 Then
+                If mRoots(iIndex) IsNot Nothing Then
+                    mNST.RemoveRoot(mRoots(iIndex))
+                    Set mRoots(iIndex) = Nothing
+                End If
+            End If
+        End If
+    End Sub
+    [Description("Removes all root notes from the tree.")]
+    Public Sub RemoveAllRoots()
+        If mNST IsNot Nothing Then
+            mNST.RemoveAllRoots()
+        End If
+    End Sub
+    
+    [Description("Removes and then re-adds all roots.")]
+    Public Sub ResetTree()
+        mNST.RemoveAllRoots()
+        InsertDefaultRoots
+    End Sub
+    
+    [Description("Sets the theme for visual styles. By default, the theme is set to Explorer.")]
+    Public Sub SetTheme(ByVal szTheme As String)
+        If mNST IsNot Nothing Then
+            mNST.SetTheme(szTheme)
+        End If
+    End Sub
+    
+    [Description("Collapses all nodes in the tree.")]
+    Public Sub CollapseAll()
+        If mNST IsNot Nothing Then mNST.CollapseAll()
+    End Sub
+    
+    [Description("Retrieves information about the selected item. If more then one item is selected, the focused item is used.")]
+    Public Sub GetSelectedItem(pszParsingPath As String, pszDisplayName As String, pszParentPath As String, dwAttributes As Long)
+        If mNST Is Nothing Then Exit Sub
+        Dim ppsia As IShellItemArray
+        mNST.GetSelectedItems(ppsia)
+        If ppsia IsNot Nothing Then
+            Dim psi As IShellItem
+            Dim nCt As Long
+            ppsia.GetCount nCt
+            If nCt Then
+                ppsia.GetItemAt(0, psi)
+                If psi IsNot Nothing Then
+                    GetItemStandardInfo(psi, pszParsingPath, pszDisplayName, pszParentPath, dwAttributes)
+                End If
+            End If
+        End If
+    End Sub
+    [Description("Retrieves information about the selected items.")]
+    Public Sub GetSelectedItems(pdwCount As Long, pszParsingPaths() As String, pszDisplayNames() As String, pszParentPaths() As String, dwAttributes() As Long)
+        If mNST Is Nothing Then Exit Sub
+        Dim ppsia As IShellItemArray
+        mNST.GetSelectedItems(ppsia)
+        If ppsia IsNot Nothing Then
+            GetItemStandardInfoArray(ppsia, pdwCount, pszParsingPaths, pszDisplayNames, pszParentPaths, dwAttributes)
+        End If
+    End Sub
+ 
+    Private Sub GetChildNodeChecks(siNode As IShellItem)
+        On Error Resume Next
+        Dim nState As Long, hr As Long
+        Dim psiCur As IShellItem, psiNext As IShellItem, psiChild As IShellItem
+        Set psiCur = siNode
+        Do
+            mNST.GetItemCustomState(psiCur, nState)
+            If nState > 1 Then
+                ReDim Preserve tChecked(nCheck)
+                GetItemStandardInfo(psiCur, tChecked(nCheck).sParse, tChecked(nCheck).sDisp, tChecked(nCheck).sPar, tChecked(nCheck).dwAtr)
+                tChecked(nCheck).nState = nState
+                nCheck += 1
+                nState = 0
+            End If
+            mNST.GetNextItem(psiCur, NSTCGNI_CHILD, psiChild)
+            If Err.LastHresult = S_OK Then
+                GetChildNodeChecks psiChild
+            End If
+            mNST.GetNextItem(psiCur, NSTCGNI_NEXT, psiNext)
+            hr = Err.LastHresult
+            ' If psiNext Is Nothing Then
+            '     DebugAppend "No next sibling"
+            '     hr = E_FAIL
+            ' Else
+            '     hr = S_OK
+            ' End If
+            Set psiCur = psiNext
+            Set psiNext = Nothing
+            ' If psiCur Is Nothing Then DebugAppend "BAD RESET"
+        Loop While hr <> E_FAIL
+    End Sub
+    [Description("Retrieves a list of checked items. If pdwCount is -1, an error occured. dwCheckStates differentiates between different check types, if PartialCheckboxes, ExclusionCheckboxes, or DimmedCheckboxes is enabled.")]
+    Public Sub GetCheckedItems(pdwCount As Long, pszParsingPaths() As String, pszDisplayNames() As String, pszParentPaths() As String, dwAttributes() As Long, dwCheckTypes() As Long)
+        On Error GoTo e0
+        Dim i As Long, j As Long
+        Dim nState As Long
+        Dim psia As IShellItemArray
+        Dim psiNext As IShellItem
+        If mNST Is Nothing Then Exit Sub
+        If nRt = -1 Then Exit Sub
+        If mCheckBoxes = False Then Exit Sub
+        On Error Resume Next
+        ReDim tChecked(0): nCheck = 0
+        mNST.GetRootItems(psia)
+        psia.GetCount j
+        'Contrary to documentation, it's impossible to walk the tree with a simple loop.
+        For i = 0 To j - 1
+            Dim psiCur As IShellItem
+            psia.GetItemAt i, psiCur
+            mNST.GetItemCustomState(psiCur, nState)
+            If nState > 1 Then
+                ReDim Preserve tChecked(nCheck)
+                GetItemStandardInfo(mRoots(i), tChecked(nCheck).sParse, tChecked(nCheck).sDisp, tChecked(nCheck).sPar, tChecked(nCheck).dwAtr)
+                tChecked(nCheck).nState = nState
+                nCheck += 1
+                nState = 0
+            End If
+            mNST.GetNextItem(psiCur, NSTCGNI_CHILD, psiNext)
+            If Err.LastHresult = E_FAIL Then
+                DebugAppend "GetChecked->Root " & i & " could not get child."
+                Continue For
+            End If
+            If psiNext IsNot Nothing Then GetChildNodeChecks(psiNext)
+            Set psiCur = Nothing
+        Next
+        
+        If nCheck Then
+            ReDim pszParsingPaths(nCheck - 1)
+            ReDim pszDisplayNames(nCheck - 1)
+            ReDim pszParentPaths(nCheck - 1)
+            ReDim dwAttributes(nCheck - 1)
+            ReDim dwCheckTypes(nCheck - 1)
+            For i = 0 To UBound(tChecked)
+                pszParsingPaths(i) = tChecked(i).sParse
+                pszDisplayNames(i) = tChecked(i).sDisp
+                pszParentPaths(i) = tChecked(i).sPar
+                dwAttributes(i) = tChecked(i).dwAtr
+                dwCheckTypes(i) = tChecked(i).nState
+            Next
+            pdwCount = nCheck
+        End If
+        On Error GoTo 0
+        Exit Sub
+    e0:
+        DebugAppend "Error: An unexpected error occured in GetCheckedItems, " & Err.Number & ": " & Err.Description
+        pdwCount = -1
+    End Sub
+    
+    Private Sub ClearChildNodeChecks(siNode As IShellItem)
+        On Error Resume Next
+        Dim nState As Long, hr As Long
+        Dim psiCur As IShellItem, psiNext As IShellItem, psiChild As IShellItem
+        Set psiCur = siNode
+        Do
+            mNST.GetItemCustomState(psiCur, nState)
+            If nState > 1 Then
+                mNST.SetItemCustomState(psiCur, 1 /*Unchecked. 0 is no checkbox.*/)
+            End If
+            mNST.GetNextItem(psiCur, NSTCGNI_CHILD, psiChild)
+            If Err.LastHresult = S_OK Then
+                ClearChildNodeChecks psiChild
+            End If
+            mNST.GetNextItem(psiCur, NSTCGNI_NEXT, psiNext)
+            hr = Err.LastHresult
+            Set psiCur = psiNext
+            Set psiNext = Nothing
+        Loop While hr <> E_FAIL
+    End Sub
+    [Description("Clears all check marks.")]
+    Public Sub ClearCheckedItems()
+        On Error GoTo e0
+        Dim i As Long, j As Long
+        Dim nState As Long
+        Dim psia As IShellItemArray
+        Dim psiNext As IShellItem
+        If mNST Is Nothing Then Exit Sub
+        If nRt = -1 Then Exit Sub
+        If mCheckBoxes = False Then Exit Sub
+        On Error Resume Next
+        ReDim tChecked(0): nCheck = 0
+        mNST.GetRootItems(psia)
+        psia.GetCount j
+        'Contrary to documentation, it's impossible to walk the tree with a simple loop.
+        For i = 0 To j - 1
+            Dim psiCur As IShellItem
+            psia.GetItemAt i, psiCur
+            mNST.GetItemCustomState(psiCur, nState)
+            If nState > 1 Then
+                mNST.SetItemCustomState(psiCur, 1)
+            End If
+            mNST.GetNextItem(psiCur, NSTCGNI_CHILD, psiNext)
+            If Err.LastHresult = E_FAIL Then
+                DebugAppend "GetChecked->Root " & i & " could not get child."
+                Continue For
+            End If
+            If psiNext IsNot Nothing Then ClearChildNodeChecks(psiNext)
+            Set psiCur = Nothing
+        Next
+        Exit Sub
+    e0:
+        DebugAppend "Error: An unexpected error occured in ClearCheckedItems, " & Err.Number & ": " & Err.Description
+    End Sub
+    
+    
+    [Description("Ensures an item in the tree is visible. Returns S_OK on success, or an HRESULT error code.")]
+    Public Function EnsureVisible(ByVal szParsingPath As String) As Long
+        If mNST Is Nothing Then Exit Function
+        Dim psi As IShellItem
+        SHCreateItemFromParsingName(StrPtr(szParsingPath), Nothing, IID_IShellItem, psi)
+        If psi IsNot Nothing Then
+            mNST.EnsureItemVisible(psi)
+            Return Err.LastHresult
+        Else
+            Return Err.LastDllError
+        End If
+    End Function
+    
+    
+    #End Region
+    
+    
+    Private Sub SetStyle(dwStyle As NSTCSTYLE, fEnable As Boolean)
+        If mNST IsNot Nothing Then
+            If fEnable Then
+                mNST.SetControlStyle(dwStyle, dwStyle)
+            Else
+                mNST.SetControlStyle(dwStyle, 0)
+            End If
+        End If
+        SetCurStyles
+    End Sub
+    Private Sub SetStyle2(dwStyle As NSTCSTYLE2, fEnable As Boolean)
+        If mNST IsNot Nothing Then
+            If fEnable Then
+                mNST.SetControlStyle2(dwStyle, dwStyle)
+            Else
+                mNST.SetControlStyle2(dwStyle, 0)
+            End If
+        End If
+        SetCurStyles
+    End Sub
+    
+    Private Sub SetCurEnum()
+        mCurEnum = 0
+        mCurEnum = SHCONTF_FOLDERS Or SHCONTF_NAVIGATION_ENUM
+        If mShowFiles Then mCurEnum = mCurEnum Or SHCONTF_NONFOLDERS
+        If mShowHidden Then mCurEnum = mCurEnum Or SHCONTF_INCLUDEHIDDEN
+        If mShowSuperHidden Then mCurEnum = mCurEnum Or SHCONTF_INCLUDESUPERHIDDEN
+    End Sub
+    
+    Private Sub SetCurStyles()
+        mCurStyle = 0: mCurStyle2 = 0
+        If mExpandos Then mCurStyle = NSTCS_HASEXPANDOS
+        If mLines Then mCurStyle = mCurStyle Or NSTCS_HASLINES
+        If mSingleClick Then mCurStyle = mCurStyle Or NSTCS_SINGLECLICKEXPAND
+        If mFullRow Then mCurStyle = mCurStyle Or NSTCS_FULLROWSELECT
+        If mSpring Then mCurStyle = mCurStyle Or NSTCS_SPRINGEXPAND
+        If mHScroll Then mCurStyle = mCurStyle Or NSTCS_HORIZONTALSCROLL
+        If mRootExpandos Then mCurStyle = mCurStyle Or NSTCS_ROOTHASEXPANDO
+        If mNoRename Then mCurStyle = mCurStyle Or NSTCS_NOEDITLABELS
+        If mBorder Then mCurStyle = mCurStyle Or NSTCS_BORDER
+        If mRichTooltips Then mCurStyle = mCurStyle Or NSTCS_RICHTOOLTIP
+        If mNoOrderStrm Then mCurStyle = mCurStyle Or NSTCS_NOORDERSTREAM
+        If mNoDD Then mCurStyle = mCurStyle Or NSTCS_DISABLEDRAGDROP
+        If mNoReplaceOpen Then mCurStyle = mCurStyle Or NSTCS_NOREPLACEOPEN
+        If mEvenCY Then mCurStyle = mCurStyle Or NSTCS_EVENHEIGHT
+        If mNoInfotips Then mCurStyle = mCurStyle Or NSTCS_NOINFOTIP
+        If mShowSelAlways Then mCurStyle = mCurStyle Or NSTCS_SHOWSELECTIONALWAYS
+        If mJcts Then mCurStyle = mCurStyle Or NSTCS_ALLOWJUNCTIONS
+        If mNoIndentCheckBoxes Then mCurStyle = mCurStyle Or NSTCS_NOINDENTCHECKS
+        If mCheckBoxes Then mCurStyle = mCurStyle Or NSTCS_CHECKBOXES
+        If mPartialCheckBoxes Then mCurStyle = mCurStyle Or NSTCS_PARTIALCHECKBOXES
+        If mExcCheckBoxes Then mCurStyle = mCurStyle Or NSTCS_EXCLUSIONCHECKBOXES
+        If mDimCheckBoxes Then mCurStyle = mCurStyle Or NSTCS_DIMMEDCHECKBOXES
+        If mEmptyText Then mCurStyle = mCurStyle Or NSTCS_EMPTYTEXT
+        If mFadeExpandos Then mCurStyle = mCurStyle Or NSTCS_FADEINOUTEXPANDOS
+        If mAutoHScroll Then mCurStyle = mCurStyle Or NSTCS_AUTOHSCROLL
+        If mFavMode Then mCurStyle = mCurStyle Or NSTCS_FAVORITESMODE
+        If mRefreshBtn Then mCurStyle = mCurStyle Or NSTCS_SHOWREFRESHBUTTON
+        If mDelBtn Then mCurStyle = mCurStyle Or NSTCS_SHOWDELETEBUTTON
+        If mTabsBtn Then mCurStyle = mCurStyle Or NSTCS_SHOWTABSBUTTON
+                        
+        'If mNeverNonEnum Then mCurStyle2 = mCurStyle2 Or NTSCS2_NEVERINSERTNONENUMERATED
+        If mNoSingExp Then mCurStyle2 = mCurStyle2 Or NTSCS2_NOSINGLETONAUTOEXPAND
+        'If mPinnedOnly Then mCurStyle2 = mCurStyle2 Or NSTCS2_DISPLAYPINNEDONLY
+        If mPadding Then mCurStyle2 = mCurStyle2 Or NSTCS2_DISPLAYPADDING
+        If mNullspace Then mCurStyle2 = mCurStyle2 Or NSTCS2_SHOWNULLSPACEMENU
+        If mInterrupt Then mCurStyle2 = mCurStyle2 Or NSTCS2_INTERRUPTNOTIFICATIONS
+    End Sub
+
+    Private Function GetItemStandardInfo(psi As IShellItem, lpParsing As String, lpDisp As String, lpPar As String, lpAtr As SFGAOF) As Long
+        'Returns: -1 error, 0=success all, 2=failed par, 4=failed disp, 8=failed parse
+        Dim lp1 As LongPtr, lp2 As LongPtr, lp3 As LongPtr
+        Dim dwRet As Long
+        If psi IsNot Nothing Then
+            psi.GetAttributes -1, lpAtr
+            psi.GetDisplayName SIGDN_DESKTOPABSOLUTEPARSING, lp1
+            psi.GetDisplayName SIGDN_NORMALDISPLAY, lp2
+            psi.GetDisplayName SIGDN_FILESYSPATH, lp3
+            If lp1 Then
+                lpParsing = LPWSTRtoStr(lp1)
+            Else
+                dwRet = &H8
+            End If
+            If lp2 Then
+                lpDisp = LPWSTRtoStr(lp2)
+            Else
+                dwRet = dwRet Or &H4
+            End If
+            If lp3 Then
+                Dim stmp As String = LPWSTRtoStr(lp3)
+                If InStr(stmp, "\") Then
+                    lpPar = Left$(stmp, InStrRev(stmp, "\") - 1)
+                Else
+                    lpPar = stmp
+                End If
+            Else
+                If InStr(lpParsing, "\") Then
+                    lpPar = Left$(lpParsing, InStrRev(lpParsing, "\") - 1)
+                Else
+                    lpPar = lpParsing
+                End If
+            End If
+        End If
+    End Function
+    Private Function GetItemStandardInfoArray(psia As IShellItemArray, lpCnt As Long, lpParsing() As String, lpDisp() As String, lpPar() As String, lpAtr() As SFGAOF) As Long
+        If psia Is Nothing Then
+        lpCnt = 0
+        Else
+            psia.GetCount(lpCnt)
+        End If
+        If lpCnt = 0 Then
+            ReDim lpParsing(lpCnt)
+            ReDim lpDisp(lpCnt)
+            ReDim lpPar(lpCnt)
+            ReDim lpAtr(lpCnt)
+        Else
+            Dim sPP As String, sPar As String, sDisp As String, lAtr As Long
+            Dim psi As IShellItem
+            ReDim lpParsing(lpCnt - 1)
+            ReDim lpDisp(lpCnt - 1)
+            ReDim lpPar(lpCnt - 1)
+            ReDim lpAtr(lpCnt - 1)
+            Dim i As Long
+            For i = 0 To lpCnt - 1
+                psia.GetItemAt(i, psi)
+                If psi IsNot Nothing Then
+                    GetItemStandardInfo(psi, sPP, sDisp, sPar, lAtr)
+                    lpParsing(i) = sPP
+                    lpDisp(i) = sDisp
+                    lpPar(i) = sPar
+                    lpAtr(i) = lAtr
+                End If
+            Next
+        End If
+    End Function
+ 
+    
+    
+
+    
+
+    Private Sub ReadWindowsVersion()
+    'GetVersion[Ex] does not work with Win8 and above, so we'll go by kernel32 version
+    'GetFileVersionInfo does not work with some versions of Win10 and above.
+
+    Dim hMod As LongPtr
+    Dim hRes As LongPtr
+
+    hMod = LoadLibraryW(StrPtr("kernel32.dll"))
+    If hMod Then
+        hRes = FindResourceW(hMod, StrPtr("#1"), RT_VERSION)
+        If hRes Then
+            Dim hGbl As LongPtr
+            hGbl = LoadResource(hMod, hRes)
+            If (hGbl) Then
+                Dim lpRes As LongPtr
+                lpRes = LockResource(hGbl)
+                If lpRes Then
+                    Dim tVerInfo As VS_VERSIONINFO_FIXED_PORTION
+                    CopyMemory tVerInfo, ByVal lpRes, LenB(tVerInfo)
+                    If tVerInfo.Value.dwFileVersionMSh >= 6& Then
+                        bIsWinVistaOrGreater = True
+                        If tVerInfo.Value.dwFileVersionMSl >= 1& Then bIsWin7OrGreater = True
+                        If tVerInfo.Value.dwFileVersionMSl >= 2& Then bIsWin8OrGreater = True
+                        If (tVerInfo.Value.dwFileVersionMSl = 4&) Or (tVerInfo.Value.dwFileVersionMSh >= 10&) Then bIsWin10OrGreater = True
+                    End If
+                End If
+            End If
+        End If
+        FreeLibrary hMod
+    End If
+    Dim fWow64 As Long
+    IsWow64Process GetCurrentProcess(), fWow64
+    If fWow64 Then bIsWow64 = True
+    End Sub
+    
+
+    
+    
+    
+    
+    #Region "Debug"
+    
+    
+    Private Sub DebugAppend(ByVal sMsg As String, Optional ilvl As Long = 0)
+    If ilvl < dbg_MinLevel Then Exit Sub
+    Dim sOut As String
+    If dbg_IncludeDate Then sOut = "[" & Format$(Now, dbg_dtFormat) & "] "
+    If dbg_IncludeName Then sOut = sOut & Ambient.DisplayName & ": "
+    sOut = sOut & sMsg
+    If dbg_UseTrace Then
+        Debug.TracePrint sOut
+    Else
+        If dbg_PrintToImmediate Then Debug.Print sOut
+    End If
+    
+    If dbg_RaiseEvent = True Then RaiseEvent DebugMessage(sOut, CInt(ilvl))
+
+    End Sub
+    Private Function GetNSTCSTYLEStr(lVal As Long) As String
+    Dim sRet As String
+     If (lVal And NSTCS_HASEXPANDOS) = NSTCS_HASEXPANDOS Then sRet = sRet & "NSTCS_HASEXPANDOS Or "
+     If (lVal And NSTCS_HASLINES) = NSTCS_HASLINES Then sRet = sRet & "NSTCS_HASLINES Or "
+     If (lVal And NSTCS_SINGLECLICKEXPAND) = NSTCS_SINGLECLICKEXPAND Then sRet = sRet & "NSTCS_SINGLECLICKEXPAND Or "
+     If (lVal And NSTCS_FULLROWSELECT) = NSTCS_FULLROWSELECT Then sRet = sRet & "NSTCS_FULLROWSELECT Or "
+     If (lVal And NSTCS_SPRINGEXPAND) = NSTCS_SPRINGEXPAND Then sRet = sRet & "NSTCS_SPRINGEXPAND Or "
+     If (lVal And NSTCS_HORIZONTALSCROLL) = NSTCS_HORIZONTALSCROLL Then sRet = sRet & "NSTCS_HORIZONTALSCROLL Or "
+     If (lVal And NSTCS_ROOTHASEXPANDO) = NSTCS_ROOTHASEXPANDO Then sRet = sRet & "NSTCS_ROOTHASEXPANDO Or "
+     If (lVal And NSTCS_SHOWSELECTIONALWAYS) = NSTCS_SHOWSELECTIONALWAYS Then sRet = sRet & "NSTCS_SHOWSELECTIONALWAYS Or "
+     If (lVal And NSTCS_NOINFOTIP) = NSTCS_NOINFOTIP Then sRet = sRet & "NSTCS_NOINFOTIP Or "
+     If (lVal And NSTCS_EVENHEIGHT) = NSTCS_EVENHEIGHT Then sRet = sRet & "NSTCS_EVENHEIGHT Or "
+     If (lVal And NSTCS_NOREPLACEOPEN) = NSTCS_NOREPLACEOPEN Then sRet = sRet & "NSTCS_NOREPLACEOPEN Or "
+     If (lVal And NSTCS_DISABLEDRAGDROP) = NSTCS_DISABLEDRAGDROP Then sRet = sRet & "NSTCS_DISABLEDRAGDROP Or "
+     If (lVal And NSTCS_NOORDERSTREAM) = NSTCS_NOORDERSTREAM Then sRet = sRet & "NSTCS_NOORDERSTREAM Or "
+     If (lVal And NSTCS_RICHTOOLTIP) = NSTCS_RICHTOOLTIP Then sRet = sRet & "NSTCS_RICHTOOLTIP Or "
+     If (lVal And NSTCS_BORDER) = NSTCS_BORDER Then sRet = sRet & "NSTCS_BORDER Or "
+     If (lVal And NSTCS_NOEDITLABELS) = NSTCS_NOEDITLABELS Then sRet = sRet & "NSTCS_NOEDITLABELS Or "
+     If (lVal And NSTCS_TABSTOP) = NSTCS_TABSTOP Then sRet = sRet & "NSTCS_TABSTOP Or "
+     If (lVal And NSTCS_FAVORITESMODE) = NSTCS_FAVORITESMODE Then sRet = sRet & "NSTCS_FAVORITESMODE Or "
+     If (lVal And NSTCS_AUTOHSCROLL) = NSTCS_AUTOHSCROLL Then sRet = sRet & "NSTCS_AUTOHSCROLL Or "
+     If (lVal And NSTCS_FADEINOUTEXPANDOS) = NSTCS_FADEINOUTEXPANDOS Then sRet = sRet & "NSTCS_FADEINOUTEXPANDOS Or "
+     If (lVal And NSTCS_EMPTYTEXT) = NSTCS_EMPTYTEXT Then sRet = sRet & "NSTCS_EMPTYTEXT Or "
+     If (lVal And NSTCS_CHECKBOXES) = NSTCS_CHECKBOXES Then sRet = sRet & "NSTCS_CHECKBOXES Or "
+     If (lVal And NSTCS_PARTIALCHECKBOXES) = NSTCS_PARTIALCHECKBOXES Then sRet = sRet & "NSTCS_PARTIALCHECKBOXES Or "
+     If (lVal And NSTCS_EXCLUSIONCHECKBOXES) = NSTCS_EXCLUSIONCHECKBOXES Then sRet = sRet & "NSTCS_EXCLUSIONCHECKBOXES Or "
+     If (lVal And NSTCS_DIMMEDCHECKBOXES) = NSTCS_DIMMEDCHECKBOXES Then sRet = sRet & "NSTCS_DIMMEDCHECKBOXES Or "
+     If (lVal And NSTCS_NOINDENTCHECKS) = NSTCS_NOINDENTCHECKS Then sRet = sRet & "NSTCS_NOINDENTCHECKS Or "
+     If (lVal And NSTCS_ALLOWJUNCTIONS) = NSTCS_ALLOWJUNCTIONS Then sRet = sRet & "NSTCS_ALLOWJUNCTIONS Or "
+     If (lVal And NSTCS_SHOWTABSBUTTON) = NSTCS_SHOWTABSBUTTON Then sRet = sRet & "NSTCS_SHOWTABSBUTTON Or "
+     If (lVal And NSTCS_SHOWDELETEBUTTON) = NSTCS_SHOWDELETEBUTTON Then sRet = sRet & "NSTCS_SHOWDELETEBUTTON Or "
+     If (lVal And NSTCS_SHOWREFRESHBUTTON) = NSTCS_SHOWREFRESHBUTTON Then sRet = sRet & "NSTCS_SHOWREFRESHBUTTON Or "
+    If sRet = "" Then sRet = "(unknown)"
+    GetNSTCSTYLEStr = sRet
+    End Function
+    Private Function GetNSTCITEMSTATEStr(lVal As Long) As String
+    Dim sRet As String
+     If (lVal And NSTCIS_NONE) = NSTCIS_NONE Then sRet = sRet & "NSTCIS_NONE Or "
+     If (lVal And NSTCIS_SELECTED) = NSTCIS_SELECTED Then sRet = sRet & "NSTCIS_SELECTED Or "
+     If (lVal And NSTCIS_EXPANDED) = NSTCIS_EXPANDED Then sRet = sRet & "NSTCIS_EXPANDED Or "
+     If (lVal And NSTCIS_BOLD) = NSTCIS_BOLD Then sRet = sRet & "NSTCIS_BOLD Or "
+     If (lVal And NSTCIS_DISABLED) = NSTCIS_DISABLED Then sRet = sRet & "NSTCIS_DISABLED Or "
+     If (lVal And NSTCIS_SELECTEDNOEXPAND) = NSTCIS_SELECTEDNOEXPAND Then sRet = sRet & "NSTCIS_SELECTEDNOEXPAND Or "
+    If sRet = "" Then sRet = "(unknown)"
+    GetNSTCITEMSTATEStr = sRet
+    End Function
+    Private Function GetNSTCSTYLE2Str(lVal As Long) As String
+    Dim sRet As String
+     If (lVal And NSTCS2_DEFAULT) = NSTCS2_DEFAULT Then sRet = sRet & "NSTCS2_DEFAULT Or "
+     If (lVal And NSTCS2_INTERRUPTNOTIFICATIONS) = NSTCS2_INTERRUPTNOTIFICATIONS Then sRet = sRet & "NSTCS2_INTERRUPTNOTIFICATIONS Or "
+     If (lVal And NSTCS2_SHOWNULLSPACEMENU) = NSTCS2_SHOWNULLSPACEMENU Then sRet = sRet & "NSTCS2_SHOWNULLSPACEMENU Or "
+     If (lVal And NSTCS2_DISPLAYPADDING) = NSTCS2_DISPLAYPADDING Then sRet = sRet & "NSTCS2_DISPLAYPADDING Or "
+     If (lVal And NSTCS2_DISPLAYPINNEDONLY) = NSTCS2_DISPLAYPINNEDONLY Then sRet = sRet & "NSTCS2_DISPLAYPINNEDONLY Or "
+     If (lVal And NTSCS2_NOSINGLETONAUTOEXPAND) = NTSCS2_NOSINGLETONAUTOEXPAND Then sRet = sRet & "NTSCS2_NOSINGLETONAUTOEXPAND Or "
+     If (lVal And NTSCS2_NEVERINSERTNONENUMERATED) = NTSCS2_NEVERINSERTNONENUMERATED Then sRet = sRet & "NTSCS2_NEVERINSERTNONENUMERATED Or "
+ 
+    If sRet = "" Then sRet = "(unknown)"
+    GetNSTCSTYLE2Str = sRet
+    End Function
+    Private Function dbg_PKEYToString(tpk As PROPERTYKEY) As String
+    Dim sGID As String
+
+    sGID = dbg_GUIDToString(tpk.fmtid, False)
+    dbg_PKEYToString = "{" & sGID & ", " & tpk.pid & "}"
+    End Function
+    Private Function dbg_GUIDToString(tg As UUID, Optional bBrack As Boolean = True) As String
+    'StringFromGUID2 never works, even "working" code from vbaccelerator AND MSDN
+    dbg_GUIDToString = Right$("00000000" & Hex$(tg.Data1), 8) & "-" & Right$("0000" & Hex$(tg.Data2), 4) & "-" & Right$("0000" & Hex$(tg.Data3), 4) & _
+    "-" & Right$("00" & Hex$(CLng(tg.Data4(0))), 2) & Right$("00" & Hex$(CLng(tg.Data4(1))), 2) & "-" & Right$("00" & Hex$(CLng(tg.Data4(2))), 2) & _
+    Right$("00" & Hex$(CLng(tg.Data4(3))), 2) & Right$("00" & Hex$(CLng(tg.Data4(4))), 2) & Right$("00" & Hex$(CLng(tg.Data4(5))), 2) & _
+    Right$("00" & Hex$(CLng(tg.Data4(6))), 2) & Right$("00" & Hex$(CLng(tg.Data4(7))), 2)
+    If bBrack Then dbg_GUIDToString = "{" & dbg_GUIDToString & "}"
+    End Function
+    
+    Private Sub IServiceProvider_QueryService(guidService As UUID, riid As UUID, ppvObject As LongPtr) Implements IServiceProvider.QueryService
+        Debug.Print "ServiceRq: " & dbg_GUIDToString(guidService) & ", " & dbg_GUIDToString(riid)
+        Err.ReturnHResult = E_NOINTERFACE
+    End Sub
+ 
+    #End Region
+    
+End Class

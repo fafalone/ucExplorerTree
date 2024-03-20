@@ -1,0 +1,292 @@
+[Description("ucExplorerTree Test Form")]
+[FormDesignerId("60A0B418-8331-49BD-A900-75B0E785FA9D")]
+[PredeclaredId]
+Class Form1
+    Private mCurFilter As String
+    
+    Private mLogEvt As Boolean
+    
+    Public Sub AppendLog(smsg As String)
+    Text1.Text = Text1.Text & smsg & vbCrLf
+    SendMessage Text1.hWnd, EM_SCROLL, SB_BOTTOM, ByVal 0&
+    End Sub
+    
+
+    Private Sub Command1_Click() Handles Command1.Click
+        Dim sSelName As String, sSelPath As String, sSelPar As String, lAtr As Long
+        ZucExplorerTree1.GetSelectedItem(sSelPath, sSelName, sSelPar, lAtr)
+        If sSelName = "" Then
+            AppendLog "No item selected."
+        Else
+            AppendLog "Selected item: " & sSelName & " (" & sSelPath & ")"
+        End If
+    End Sub
+    
+    Private Sub Form_Load() Handles Form.Load
+        mCurFilter = "*.*"
+        mLogEvt = True
+        Check6.Value = IIf(ZucExplorerTree1.ShowFiles = True, vbChecked, vbUnchecked)
+        Check1.Value = IIf(ZucExplorerTree1.Checkboxes = True, vbChecked, vbUnchecked)
+        Check2.Value = IIf(ZucExplorerTree1.PartialCheckboxes = True, vbChecked, vbUnchecked)
+        Check3.Value = IIf(ZucExplorerTree1.ExclusionCheckboxes = True, vbChecked, vbUnchecked)
+        Check4.Value = IIf(ZucExplorerTree1.DimmedCheckboxes = True, vbChecked, vbUnchecked)
+        Check5.Value = IIf(ZucExplorerTree1.NoIndentCheckboxes = True, vbChecked, vbUnchecked)
+        Check7.Value = IIf(ZucExplorerTree1.HorizontalScroll = True, vbChecked, vbUnchecked)
+        Check8.Value = IIf(ZucExplorerTree1.AutoHScroll = True, vbChecked, vbUnchecked)
+        Check9.Value = IIf(ZucExplorerTree1.FullRowSelect = True, vbChecked, vbUnchecked)
+        Check19.Value = IIf(ZucExplorerTree1.SpringExpand = True, vbChecked, vbUnchecked)
+        Check23.Value = IIf(ZucExplorerTree1.AllowContextMenu = True, vbChecked, vbUnchecked)
+        Check10.Value = IIf(ZucExplorerTree1.HasExpandos = True, vbChecked, vbUnchecked)
+        Check11.Value = IIf(ZucExplorerTree1.FadeInOutExpandos = True, vbChecked, vbUnchecked)
+        Check12.Value = IIf(ZucExplorerTree1.HasLines = True, vbChecked, vbUnchecked)
+        Check14.Value = IIf(ZucExplorerTree1.EmptyText = True, vbChecked, vbUnchecked)
+        Check24.Value = IIf(ZucExplorerTree1.NoReplaceOpen = True, vbChecked, vbUnchecked)
+        Check13.Value = IIf(ZucExplorerTree1.Border = True, vbChecked, vbUnchecked)
+        Check15.Value = IIf(ZucExplorerTree1.SingleClickExpand = True, vbChecked, vbUnchecked)
+        Check20.Value = IIf(ZucExplorerTree1.NoInfoTips = True, vbChecked, vbUnchecked)
+        Check21.Value = IIf(ZucExplorerTree1.RichTooltips = True, vbChecked, vbUnchecked)
+        Check25.Value = IIf(ZucExplorerTree1.DisplayPinnedOnly = True, vbChecked, vbUnchecked)
+        Check16.Value = IIf(ZucExplorerTree1.ShowTabsButton = True, vbChecked, vbUnchecked)
+        Check17.Value = IIf(ZucExplorerTree1.ShowDeleteButton = True, vbChecked, vbUnchecked)
+        Check18.Value = IIf(ZucExplorerTree1.ShowRefreshButton = True, vbChecked, vbUnchecked)
+        Check22.Value = IIf(ZucExplorerTree1.DisableDragDrop = True, vbChecked, vbUnchecked)
+        
+    End Sub
+    
+    Private Sub Command2_Click() Handles Command2.Click
+        Dim nCount As Long, sSelName() As String, sSelPath() As String, sSelPar() As String, lAtr() As Long
+        ZucExplorerTree1.GetSelectedItems(nCount, sSelPath, sSelName, sSelPar, lAtr)
+        If nCount Then
+            Dim i As Long
+            For i = 0 To nCount - 1
+                AppendLog "Selected item " & CStr(i + 1) & " of " & CStr(nCount) & ": " & sSelName(i) & " (" & sSelPath(i) & ")"
+            Next
+        Else
+            AppendLog "No items selected."
+        End If
+    End Sub
+    
+    Private Sub Check1_Click() Handles Check1.Click
+        If Check1.Value = vbChecked Then
+            ZucExplorerTree1.Checkboxes = True
+        Else
+            ZucExplorerTree1.Checkboxes = False
+        End If
+    End Sub
+    
+    Private Sub Check2_Click() Handles Check2.Click
+        If Check2.Value = vbChecked Then
+            ZucExplorerTree1.PartialCheckboxes = True
+        Else
+            ZucExplorerTree1.PartialCheckboxes = False
+        End If
+    End Sub
+    
+    Private Sub Check3_Click() Handles Check3.Click
+        If Check3.Value = vbChecked Then
+            ZucExplorerTree1.ExclusionCheckboxes = True
+        Else
+            ZucExplorerTree1.ExclusionCheckboxes = False
+        End If
+    End Sub
+    
+    Private Sub Check4_Click() Handles Check4.Click
+        If Check4.Value = vbChecked Then
+            ZucExplorerTree1.DimmedCheckboxes = True
+        Else
+            ZucExplorerTree1.DimmedCheckboxes = False
+        End If
+    End Sub
+    
+    Private Sub Check5_Click() Handles Check5.Click
+        If Check5.Value = vbChecked Then
+            ZucExplorerTree1.NoIndentCheckboxes = True
+        Else
+            ZucExplorerTree1.NoIndentCheckboxes = False
+        End If
+    End Sub
+    
+    Private Sub Command3_Click() Handles Command3.Click
+        Dim nCount As Long, sSelName() As String, sSelPath() As String, sSelPar() As String, lAtr() As SFGAOF, nStates() As Long
+        ZucExplorerTree1.GetCheckedItems(nCount, sSelPath, sSelName, sSelPar, lAtr, nStates)
+        If nCount Then
+            Dim i As Long
+            For i = 0 To nCount - 1
+                AppendLog "Checked item " & CStr(i + 1) & " of " & CStr(nCount) & " (State=" & nStates(i) & "): " & sSelName(i) & " (" & sSelPath(i) & ")"
+            Next
+        Else
+            AppendLog "No items checked."
+        End If
+    End Sub
+    
+    Private Sub Command4_Click() Handles Command4.Click
+        ZucExplorerTree1.ClearCheckedItems()
+    End Sub
+    
+    Private Sub ZucExplorerTree1_DebugMessage(sMsg As String, nLevel As Integer) Handles ZucExplorerTree1.DebugMessage
+        AppendLog "[DEBUG]" & sMsg
+    End Sub
+    
+    Private Sub ZucExplorerTree1_ItemClick(ByVal Button As UCET_CLICKTYPE, ByVal ClickLocation As UCET_CLICKLOCATION, ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long) Handles ZucExplorerTree1.ItemClick
+        If mLogEvt = False Then Exit Sub
+        AppendLog "ItemClickRaw 0x" & Hex$(Button)
+        If Button = (UCET_CLICKTYPE_DBLCLICK + UCET_CLICKTYPE_LBUTTON) Then
+            AppendLog "Double-clicked item: " & sName
+        ElseIf Button = UCET_CLICKTYPE_RBUTTON Then
+            AppendLog "Right-clicked item: " & sName
+        ElseIf Button = UCET_CLICKTYPE_LBUTTON Then
+            If (ClickLocation And UCET_CLICKLOCATION_ONITEMSTATEICON) Then
+                AppendLog "Checkbox click: " & sName
+            ElseIf (ClickLocation And UCET_CLICKLOCATION_ONITEMTABBUTTON) Then
+                AppendLog "Tab/Del/Ref click: " & sName
+            ElseIf (ClickLocation <> UCET_CLICKLOCATION_NOWHERE) Then
+                AppendLog "Clicked item: " & sName
+            End If
+        End If
+    End Sub
+    
+    Private Sub ZucExplorerTree1_TreeDragEnter(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long, ByVal nDragItems As Long, sDragParsingPaths() As String, sDragNames() As String, sDragParents() As String, dwDragAtrs() As Long, ByVal grfKeyState As Long, ByVal bOutsideSource As Boolean, pdwEffect As Long, pfBlockDrag As Boolean) Handles ZucExplorerTree1.TreeDragEnter
+        If mLogEvt = False Then Exit Sub
+        If nDragItems Then
+            AppendLog "DragEnter, files: " & Join(sDragNames, ", ")
+        End If
+    End Sub
+    
+    Private Sub ZucExplorerTree1_SelectionChanged(ByVal Count As Long, sParsingPath() As String, sName() As String, sParent() As String, dwAttrib() As Long) Handles ZucExplorerTree1.SelectionChanged
+        If mLogEvt = False Then Exit Sub
+        AppendLog "Selection changed. New count = " & Count & ", Item(s)=" & Join(sName, ", ")
+    End Sub
+    
+    Private Sub ZucExplorerTree1_OnBeforeExpand(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long, pCancel As Boolean) Handles ZucExplorerTree1.OnBeforeExpand
+        If mLogEvt = False Then Exit Sub
+        AppendLog "Item expanding: " & sName
+        'Set pCancel to True to block the expansion
+    End Sub
+    
+    Private Sub ZucExplorerTree1_OnBeginRename(ByVal sParsingPath As String, ByVal sName As String, ByVal sParent As String, ByVal dwAttrib As Long) Handles ZucExplorerTree1.OnBeginRename
+        If mLogEvt = False Then Exit Sub
+        AppendLog "Renaming " & sName
+    End Sub
+    
+    Private Sub ZucExplorerTree1_KeyboardInput(ByVal uMsg As Long, ByVal wParam As LongPtr, ByVal lParam As LongPtr, phresult As Long) Handles ZucExplorerTree1.KeyboardInput
+        If mLogEvt = False Then Exit Sub
+        If uMsg = WM_KEYDOWN Then
+            AppendLog "KeyDown: " & wParam
+        End If
+        'Set hresult to nonzero to indicated the message has been handled.
+    End Sub
+    
+    Private Sub Command5_Click() Handles Command5.Click
+        Text1.Text = ""
+    End Sub
+    
+    Private Sub Check6_Click() Handles Check6.Click
+        ZucExplorerTree1.ShowFiles = (Check6.Value = vbChecked)
+    End Sub
+    
+    Private Sub Text2_Change() Handles Text2.Change
+        If Text2.Text <> mCurFilter Then
+            Command6.Enabled = True
+        Else
+            Command6.Enabled = False
+        End If
+    End Sub
+    
+    Private Sub Command6_Click() Handles Command6.Click
+        mCurFilter = Text2.Text
+        If ZucExplorerTree1.ShowFiles Then
+            ZucExplorerTree1.FilesFilter = mCurFilter
+        End If
+        Command6.Enabled = False
+    End Sub
+    
+    Private Sub Check7_Click() Handles Check7.Click
+        ZucExplorerTree1.HorizontalScroll = (Check7.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check8_Click() Handles Check8.Click
+        ZucExplorerTree1.AutoHScroll = (Check8.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check9_Click() Handles Check9.Click
+        ZucExplorerTree1.FullRowSelect = (Check9.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check10_Click() Handles Check10.Click
+        ZucExplorerTree1.HasExpandos = (Check10.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check11_Click() Handles Check11.Click
+        ZucExplorerTree1.FadeInOutExpandos = (Check11.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check12_Click() Handles Check12.Click
+        ZucExplorerTree1.HasLines = (Check12.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check13_Click() Handles Check13.Click
+        ZucExplorerTree1.Border = (Check13.Value = vbChecked)
+        Shape1.Visible = (Check13.Value = vbUnchecked)
+    End Sub
+    
+    Private Sub Check14_Click() Handles Check14.Click
+        ZucExplorerTree1.EmptyText = (Check14.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check15_Click() Handles Check15.Click
+        ZucExplorerTree1.SingleClickExpand = (Check15.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check16_Click() Handles Check16.Click
+        ZucExplorerTree1.ShowTabsButton = (Check16.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check17_Click() Handles Check17.Click
+        ZucExplorerTree1.ShowDeleteButton = (Check17.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check18_Click() Handles Check18.Click
+        ZucExplorerTree1.ShowRefreshButton = (Check18.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check19_Click() Handles Check19.Click
+        ZucExplorerTree1.SpringExpand = (Check19.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check20_Click() Handles Check20.Click
+        ZucExplorerTree1.NoInfoTips = (Check20.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check21_Click() Handles Check21.Click
+        ZucExplorerTree1.RichTooltips = (Check21.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check22_Click() Handles Check22.Click
+        ZucExplorerTree1.DisableDragDrop = (Check22.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check23_Click() Handles Check23.Click
+        ZucExplorerTree1.AllowContextMenu = (Check23.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check24_Click() Handles Check24.Click
+        ZucExplorerTree1.NoReplaceOpen = (Check24.Value = vbChecked)
+    End Sub
+    
+    Private Sub Check25_Click() Handles Check25.Click
+        ZucExplorerTree1.DisplayPinnedOnly = (Check11.Value = vbChecked)
+    End Sub
+    
+    Private Sub Command7_Click() Handles Command7.Click
+        ZucExplorerTree1.ResetTree()
+    End Sub
+    
+    Private Sub Check26_Click() Handles Check26.Click
+        mLogEvt = (Check26.Value = vbChecked)
+    End Sub
+    
+    
+    
+    
+    
+End Class

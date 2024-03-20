@@ -3,7 +3,7 @@ ActiveX Control Wrapper for INamespaceTreeControl
 
 Version 1.0.1 - Released 20 Mar 2024
 
-This is a UserControl/ActiveX control that, like ucExplorerBrowse and IExplorerBrowse, wraps the Windows shell component INamespaceTreeControl, the object that makes up an Explorer window's left pane.
+This is a UserControl/ActiveX control that, like ucExplorerBrowse and IExplorerBrowse, wraps the Windows shell component [INamespaceTreeControl](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-inamespacetreecontrol), the object that makes up an Explorer window's left pane.
 
 ![image](https://github.com/fafalone/ucExplorerTree/assets/7834493/c1a804ca-956e-4642-b0f7-9db4adec653c)
 
